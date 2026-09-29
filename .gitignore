@@ -1,4 +1,4 @@
-# --- Secretos ---
+# --- Secrets ---
 .env
 
 # --- Python / ai-service ---
@@ -9,15 +9,14 @@ __pycache__/
 build/
 .gradle/
 
-# --- Datos descargados (40+ MB; se regeneran con tools/) ---
+# --- Downloaded data (40+ MB; regenerated with tools/) ---
 data/raw/
 
 # --- IDE ---
 .idea/
 
-# --- Cachés de herramientas (opcional: borra este bloque si lo quieres mínimo) ---
+# --- Tool caches (optional: remove this block for a minimal setup) ---
 *.pyc
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-
