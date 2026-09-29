@@ -57,3 +57,37 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `docs/REVISION-TECNICA.md`: una línea de cierre en §5; la tabla se conserva como registro histórico.
 - Sin cambios de código ni de contrato: ninguna decisión congelada de `09` §2 se modifica, y ambos ADR ya
   estaban incorporados en `02`, `03`, `04`, `05`, `06`, `08` y `10`.
+
+## Sprint 1 — Esqueleto de pipeline-service (2026-09-28)
+- Hecho: proyecto Gradle (Kotlin DSL) con toolchain Java 25, Spring Boot 4.1.1, Actuator, Flyway
+  configurado sin migraciones, logs JSON estructurados y Dockerfile multi-stage con usuario no-root.
+- Versiones de parche fijadas, como pide ADR-0006 para el Sprint 1 (verificadas en Maven Central el
+  2026-09-28): Spring Boot **4.1.1** (última estable de la rama 4.1), que gestiona Spring Framework 7.0.9,
+  **Spring Batch 6.0.5**, Flyway 12.4.0, driver PostgreSQL 42.7.13, Testcontainers 2.0.5 y Micrometer 1.17.1.
+  Gradle 9.8.0. Spotless 8.9.0 con palantir-java-format 2.100.0.
+  **Nota para el Sprint 2:** el `V1__spring_batch_schema.sql` debe copiarse del jar de Spring Batch **6.0.5**.
+- Decisiones:
+  - D4: el Sprint 1 **no** incluye Spring Batch. Añadir `spring-boot-starter-batch-jdbc` sin la migración `V1`
+    dejaría la app exigiendo tablas `BATCH_*` inexistentes. | Alternativas: adelantar `V1` al Sprint 1 |
+    Motivo: `docs/07` pone migraciones y job en el Sprint 2 | Reversible: sí.
+  - D5: **reordenado el Sprint 1**: los esqueletos (d, e) van antes de la CI (c). La CI llamaría a
+    `./gradlew test` y `uv run pytest` sobre servicios inexistentes, y su PR nacería rojo, incumpliendo el DoD
+    de `docs/08` §1. | Alternativas: job `detect` con `if:` que saltara los jobs; aceptar CI roja dos ramas |
+    Motivo: evita guards temporales y PRs rojos; el resto del orden del owner se mantiene | Reversible: sí |
+    Aprobado por: owner.
+  - D6: Spotless con `palantirJavaFormat` (NFR-17 admite Google Java Format o Palantir). Palantir tolera
+    mejor las versiones nuevas del lenguaje y usa 120 columnas. | Reversible: sí (una línea).
+  - D7: el Dockerfile instala `curl` explícitamente en la etapa de runtime. `docs/04` §10 pedía verificar en
+    el Sprint 1 si la imagen lo trae; instalarlo elimina la duda en vez de depender de la imagen base.
+    | Reversible: sí.
+  - D8: el test de humo desactiva Flyway y apunta el datasource a un host inexistente; HikariCP conecta de
+    forma diferida, así que el contexto carga sin PostgreSQL. Solo prueba el *wiring*; la base real se prueba
+    desde el Sprint 2 con Testcontainers. | Reversible: sí.
+- Hallazgo relevante para todo el proyecto: **Spring Boot 4 renombró los starters**. Es
+  `spring-boot-starter-webmvc` (no `-web`), existe `spring-boot-starter-flyway`, y el antigu
+  `spring-boot-starter-test` se dividió en un test-starter por módulo
+  (`-webmvc-test`, `-actuator-test`, `-jdbc-test`, `-flyway-test`). Cualquier ejemplo con los nombres
+  antiguos es de Boot 3 y se rechaza, igual que el código de Batch 5 (`09` §7 bis).
+- Archivos protegidos modificados: ninguno.
+- Pendiente en el Sprint 1: (e) esqueleto de `ai-service`, (c) CI, (f) `docker-compose.yml`,
+  (g) dataset y perfilado, (h) FR-19.
