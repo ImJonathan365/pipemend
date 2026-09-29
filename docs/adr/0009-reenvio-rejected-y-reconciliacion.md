@@ -1,9 +1,9 @@
 # ADR-0009 — Reenvío de lotes `REJECTED` y reconciliación de ejecuciones interrumpidas
 
-- **Estado:** Proposed
+- **Estado:** Accepted
 - **Fecha:** 2026-09-27
 - **Autor:** revisión técnica (agente: Claude)
-- **Aprobado por:** — (pendiente del owner)
+- **Aprobado por:** owner (2026-09-28)
 - **Requisitos relacionados:** FR-04, FR-05, FR-21, NFR-04, NFR-06
 - **Enmienda a:** ADR-0007 (solo el punto "`UNIQUE` en `ingestion_batch`"; el resto de ADR-0007 sigue vigente)
 

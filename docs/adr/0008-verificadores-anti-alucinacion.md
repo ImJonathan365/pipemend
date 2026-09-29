@@ -1,9 +1,9 @@
 # ADR-0008 — Verificadores que recalculan y rechazan ambigüedad (anti-alucinación)
 
-- **Estado:** Proposed
+- **Estado:** Accepted
 - **Fecha:** 2026-09-27
 - **Autor:** revisión técnica (agente: Claude)
-- **Aprobado por:** — (pendiente del owner)
+- **Aprobado por:** owner (2026-09-28)
 - **Requisitos relacionados:** FR-09, FR-10, OBJ-2, NFR-16
 - **Complementa a:** ADR-0003 (no lo reemplaza)
 

@@ -115,6 +115,8 @@ Todas son reversibles y están marcadas con su `R-xx`:
 
 ## 5. Dependencias con los ADR `Proposed`
 
+> **Resuelto:** el owner aceptó ADR-0008 y ADR-0009 el **2026-09-28**. Esta tabla se conserva como registro de qué se habría revertido; la columna "si el owner lo rechaza" ya no aplica.
+
 | ADR | Cambios que dependen de él | Si el owner lo rechaza |
 |---|---|---|
 | ADR-0008 | R-03, R-04, R-05, R-06, R-19 (AC-05.7), R-25 | Revertir esos cambios en `02` §4, FR-05, FR-10 y `10`; la suite adversarial se mantiene, pero documentará qué errores sí pasan |
