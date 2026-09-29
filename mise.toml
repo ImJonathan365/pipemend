@@ -2,3 +2,6 @@
 java = "temurin-25"
 python = "3.14"
 uv = "0.12.19"
+
+[env]
+UV_PYTHON_PREFERENCE = "only-system"
