@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: pipeline-service
+
+  # SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD are injected per service by docker-compose,
+  # never through a shared env_file (NFR-14: least privilege for secrets).
+  datasource:
+    hikari:
+      # NFR-05: ai_call_log is wrW transaction while the chunk
+      # transaction is still open, so the pool must hold a second connection per running job.
+      maximum-pool-size: 10
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migra
+    # No migrations exist yet; they arrive in Sprint 2. V1 will carry the official Spring Batch
+    # schema script, because Sprits own tables
+    # (spring.batch.jdbc.initialize-schema=never, docs/05 section 1).
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metr
+  endpoint:
+    health:
+      # The MVP has no authentication (docs/01 X-02) and health exposes nothing secret.
+      show-details: always
+      probes:
+        enabled: true
+
+# NFR-08: structured JSON logs ononfiguration, not code.
+# The ecs format carries service.name from spring.application.name; batchId, requestId and
+# sourceRowNumber are added throu
+logging:
+  structured:
+    format:
+      console: ecs
+  level:
+    root: INFO
+    com.pipemend: INFO
