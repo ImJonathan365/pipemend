@@ -3,7 +3,7 @@
 - **Estado:** Accepted
 - **Fecha:** 2026-09-20
 - **Requisitos relacionados:** FR-09, FR-10, FR-11, NFR-03
-- **Complementado por:** ADR-0008 (`Proposed`) — especificación de verificadores que recalculan y rechazan ambigüedad
+- **Complementado por:** ADR-0008 (`Accepted`) — especificación de verificadores que recalculan y rechazan ambigüedad
 
 ## Contexto
 Un LLM puede equivocarse con alta confianza aparente. Aplicar directamente sus correcciones a datos productivos es un riesgo inaceptable, y es exactamente lo que un evaluador técnico buscará criticar.

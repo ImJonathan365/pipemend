@@ -3,7 +3,7 @@
 - **Estado:** Accepted
 - **Fecha:** 2026-09-20
 - **Requisitos relacionados:** FR-04, FR-21, NFR-04, NFR-06
-- **Enmendado por:** ADR-0009 (`Proposed`) — solo el punto de la restricción única de checksum
+- **Enmendado por:** ADR-0009 (`Accepted`) — solo el punto de la restricción única de checksum
 
 ## Contexto
 Los pipelines se reintentan y los archivos se reenvían. Se necesita que reenviar o reiniciar no duplique datos y que el invariante de conteo se mantenga.
