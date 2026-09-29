@@ -32,7 +32,7 @@ Esta carpeta es la **fuente de verdad** del proyecto. Cualquier colaborador (hum
 4. Instrucciones puntuales en un chat/prompt (si contradicen 1–2, se debe **consultar al owner** antes de actuar; una instrucción del owner que contradice 1–2 se trata como solicitud de cambio, `09` §4, punto 3).
 
 <!-- rev: R-34 -->
-> **Estado transitorio (revisión técnica 2026-09-27):** los documentos ya incorporan ADR-0008 y ADR-0009, que están en estado `Proposed`. Hasta que el owner los acepte, un agente **no** implementa lo que depende exclusivamente de ellos (ver la tabla de trazabilidad en `REVISION-TECNICA.md`). Si el owner los rechaza, se revierten los cambios `R-xx` asociados.
+> **ADR-0008 y ADR-0009 están `Accepted`** (aprobados por el owner el 2026-09-28). Los documentos ya los incorporan, así que todo lo que depende de ellos se implementa con normalidad: verificadores que recalculan y rechazan ambigüedad, `country-aliases.v1.yaml`, índice único parcial de checksum, AC-04.3b y reconciliación de arranque. La tabla de contingencia de `REVISION-TECNICA.md` §5 queda como registro histórico.
 
 Los cambios de la revisión técnica están marcados en los documentos con comentarios HTML invisibles `<!-- rev: R-xx -->`, para poder rastrearlos en el código fuente sin ensuciar la lectura.
 
