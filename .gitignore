@@ -1,0 +1,23 @@
+# --- Secretos ---
+.env
+
+# --- Python / ai-service ---
+.venv/
+__pycache__/
+
+# --- Java / pipeline-service ---
+build/
+.gradle/
+
+# --- Datos descargados (40+ MB; se regeneran con tools/) ---
+data/raw/
+
+# --- IDE ---
+.idea/
+
+# --- Cachés de herramientas (opcional: borra este bloque si lo quieres mínimo) ---
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
