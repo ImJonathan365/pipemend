@@ -14,6 +14,8 @@ data/raw/
 
 # --- IDE ---
 .idea/
+.vscode/
+bin/
 
 # --- Tool caches (optional: remove this block for a minimal setup) ---
 *.pyc
