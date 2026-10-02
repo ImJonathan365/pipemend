@@ -132,3 +132,28 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     una línea explícita y sin archivo fantasma | Reversible: sí.
   - D17: dependencia de test `httpx2==2.13.1` en lugar de `httpx`. `starlette.testclient` marcó como
     obsoleto el backend httpx 0.x. Verificado: `TestClient` funciona sin advertencias. | Reversible: sí.
+
+## Sprint 1 — CI mínima (2026-10-01)
+- Hecho: `.github/workflows/ci.yml` con dos jobs en paralelo. `pipeline-service`: `spotlessCheck`,
+  `test` y `bootJar` sobre Temurin 25. `ai-service`: `uv sync --locked`, `ruff check`,
+  `ruff format --check`, `mypy app` y `pytest` sobre Python 3.14.
+- Versiones de las actions (verificadas el 2026-10-01): `actions/checkout@v7`, `actions/setup-java@v6`,
+  `gradle/actions/setup-gradle@v6`, `astral-sh/setup-uv@v10` con uv `0.12.19` (la misma de `mise.toml` y
+  del Dockerfile).
+- Decisiones:
+  - D18: CI con `uv sync --locked`, no `--frozen`. `--locked` afirma que `uv.lock` está sincronizado con
+    `pyproject.toml` y falla si no; `--frozen` solo consume el lock sin comprobarlo. Así una dependencia
+    editada sin re-lockear no llega a `main`. El Dockerfile conserva `--frozen` porque allí el lock ya
+    viene validado por CI. | Reversible: sí.
+  - D19: sin filtros por ruta (`paths`). Un PR que solo toca `docs/` ejecuta las dos suites; son segundos
+    y evita que un cambio de contrato o de documento pase sin probar nada. | Alternativas: `paths` por
+    servicio | Motivo: un filtro mal puesto oculta roturas cruzadas | Reversible: sí.
+  - D20: no se activa `continue-on-error` en ningún paso, ni se permite que un job quede en `skipped`
+    por defecto. `docs/09` §2.1 lo prohíbe explícitamente para `.github/workflows/*`.
+  - D21: `permissions: contents: read` y `concurrency` con `cancel-in-progress`. El workflow no escribe
+    nada en el repositorio. | Reversible: sí.
+  - D22: el build de las imágenes, la verificación de contrato (AC-18.4) y `gitleaks` **no** se incluyen:
+    `docs/07` los asigna al Sprint 8. Se añaden allí, nunca se quitan de aquí.
+- Archivos protegidos modificados: `.github/workflows/ci.yml` — creación inicial, con aprobación
+  explícita del owner en la sesión. No se quita ningún paso ni se baja ningún umbral.
+- Pendiente en el Sprint 1: (f) `docker-compose.yml`, (g) dataset y perfilado, (h) FR-19.
