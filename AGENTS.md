@@ -56,4 +56,4 @@ End every task with the report format in docs/09 §9.
 Commands:
 - Run all: `cp .env.example .env && docker compose up --build`
 - Pipeline tests: `cd pipeline-service && ./gradlew test`   # Gradle Kotlin DSL, Java 25 toolchain (ADR-0006)
-- AI tests: `cd ai-service && pytest && ruff check . && ruff format --check . && mypy app`
+- AI tests: `cd ai-service && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy app`
