@@ -1,0 +1,9 @@
+# The image needs pyproject.toml, uv.lock and app/. Nothing else.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+tests/
+*.log
