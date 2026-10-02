@@ -1,27 +1,18 @@
 spring:
-    application:
-      name: pipeline-service
+  application:
+    name: pipeline-service
 
-    # SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD are injected per service by docker-compose,
-    # never through a shared env_file (NFR-14: least privilege for secrets).
-    datasource:
-      hikari:
-        # NFR-05: ai_call_log is written in its own REQUIRES_NEW transaction while the chunk
-        # transaction is still open, so the pool must hold a second connection per running job.
-        maximum-pool-size: 10
+  # SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD are injected per service by docker-compose,
+  # never through a shared env_file (NFR-14: least privilege for secrets).
+  datasource:
+    hikari:
+      # NFR-05: ai_call_log is written in its own REQUIRES_NEW transaction while the chunk
+      # transaction is still open, so the pool must hold a second connection per running job.
+      maximum-pool-size: 10
 
-    flyway:
-      enabled: true
-      locations: classpath:db/migration
-      # No migrations exist yet; they arrive in Sprint 2. V1 will carry the official Spring Batch
-      # schema script, because Spring Batch must never create its own tables
-tá impecable: 34 variables, todos los valores coinciden con docs/04 §8. Reviso los dos Dockerfiles y el build de Gradle, donde una corrupción podría construir bien y fallar en runtime:
-
-  Read 1 file
-
-Los dos Dockerfiles están intactos (solo perdieron la línea # syntax=docker/dockerfile:1, que es cosmética). Última comprobación: main.py, cuya configuración de logs los tests no verifican:
-
-
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
     # No migrations exist yet; they arrive in Sprint 2. V1 will carry the official Spring Batch
     # schema script, because Spring Batch must never create its own tables
     # (spring.batch.jdbc.initialize-schema=never, docs/05 section 1).
@@ -43,6 +34,9 @@ management:
 
 # NFR-08: structured JSON logs on stdout. In Boot 4 this is configuration, not code.
 # The ecs format carries service.name from spring.application.name; batchId, requestId and
+
+# NFR-08: structured JSON logs on stdout. In Boot 4 this is configuration, not code.
+# The ecs format carries service.name from spring.application.name; batchId, requestId and
 # sourceRowNumber are added through the MDC from Sprint 2 on.
 logging:
   structured:
@@ -51,17 +45,3 @@ logging:
   level:
     root: INFO
     com.pipemend: INFO
-      # (spring.batch.jdbc.initialize-schema=never, docs/05 section 1).
-
-  server:
-    port: 8080
-
-  management:
-    endpoints:
-      web:
-        exposure:
-          include: health,info,metrics
-    endpoint:
-      health:
-        # The MVP has no authentication (docs/01 X-02) and health exposes nothing secret.
-        show-deta
