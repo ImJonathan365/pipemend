@@ -1,0 +1,86 @@
+name: CI
+
+# Steps are never removed from this file and thresholds are never lowered.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this workflow only needs to read the repository (NFR-14).
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes the run in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline-service:
+    name: pipeline-service (Java 25)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline-service
+    steps:
+      - uses: actions/checkout@v7
+
+      # Java 25 LTS, pinned by ADR-0006. Gradle resolves its toolchain against this JDK.
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Caches Gradle state and, by default, validates the checksum of every wrapper jar in the
+      # repository: a tampered gradle-wrapper.jar fails the job instead of running.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # NFR-17. Run before the tests so a formatting failure is reported as such.
+      - name: Lint (Spotless)
+        run: ./gradlew spotlessCheck
+
+      - name: Test
+        run: ./gradlew test
+
+      # Catches a service that compiles and tests green but cannot be packaged.
+      - name: Build jar
+        run: ./gradlew bootJar
+
+  ai-service:
+    name: ai-service (Python 3.14)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same uv version as mise.toml and the Dockerfile, so local, CI and image all resolve
+      # dependencies identically.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          version: '0.12.19'
+          python-version: '3.14'
+          working-directory: ai-service
+          enable-cache: true
+
+      # --locked asserts uv.lock is in sync with pyproject.toml and fails otherwise, so a
+      # dependency changed without re-locking cannot reach main. The Dockerfile uses --frozen,
+      # which consumes the lock without checking it.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Types (mypy)
+        run: uv run mypy app
+
+      - name: Test
+        run: uv run pytest
