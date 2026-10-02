@@ -91,3 +91,44 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados: ninguno.
 - Pendiente en el Sprint 1: (e) esqueleto de `ai-service`, (c) CI, (f) `docker-compose.yml`,
   (g) dataset y perfilado, (h) FR-19.
+
+## Sprint 1 — Esqueleto de ai-service (2026-09-28)
+- Hecho: FastAPI con `GET /health` (docs/06 A.3) y `GET /v1/info` (A.4), configuración por variables de
+  entorno con pydantic-settings, logs JSON con structlog y correlación por `X-Request-Id`/`X-Batch-Id`,
+  Dockerfile multi-stage con uv y usuario no-root, y `ruff`/`mypy --strict`/`pytest` configurados.
+- Versiones exactas fijadas (verificadas en PyPI el 2026-09-28, como pide ADR-0006 para el Sprint 1):
+  FastAPI 0.141.1, Uvicorn 0.54.0, Pydantic 2.13.5, pydantic-settings 2.15.0, structlog 26.1.0,
+  httpx 0.28.1, ruff 0.16.9, mypy 2.3.1, pytest 9.1.1. `uv.lock` commiteado.
+- Decisiones:
+  - D9: solo se crean los módulos del Sprint 1 (`main.py`, `config.py`, `api/system.py`). No se crean
+    `domain/`, `services/`, `providers/` ni `prompts/` vacíos: `docs/01` prohíbe stubs "preparados para".
+    | Reversible: sí.
+  - D10: `providerConfigured` es `True` para `mock` y `bool(LLM_API_KEY)` para el resto. La excepción de
+    `docs/04` §8 ("salvo endpoints locales sin auth") **no** se implementa todavía, porque
+    `openai_compatible` no existe hasta el Sprint 5 y adivinar ahora qué cuenta como "local" sería
+    especular. | Alternativas: usar `LLM_BASE_URL` no vacío como señal de endpoint local | Motivo: la
+    opción conservadora es la estricta (`09` §4.2) | Reversible: sí.
+  - D11: `cache.entries` y `limits.llmCallsToday` devuelven 0 porque todavía no hay caché (Sprint 3) ni
+    contador diario (Sprint 5). Es el valor verdadero, no un stub. | Reversible: sí.
+  - D12: la configuración **no** lee `.env`; solo el entorno del proceso, que compose inyecta por
+    servicio (NFR-14). | Reversible: sí.
+  - D13: `__version__` vive en `app/__init__.py` y debe coincidir con `version` de `pyproject.toml`; con
+    `package = false` el proyecto no se instala, así que `importlib.metadata` no es una opción.
+    | Reversible: sí.
+  - D14: ruff con `DTZ` y `ASYNC` activados a propósito: `DTZ` sostiene la regla de "nada de `now()`
+    implícito" (`09` §6) y `ASYNC` la de "ningún cliente síncrono dentro de un `async def`" (NFR-10).
+    | Reversible: sí.
+- Archivos protegidos modificados: `AGENTS.md` línea 59 — el comando de tests de `ai-service` pasa a
+  `uv run ...`, con aprobación explícita del owner en la sesión. `docs/09` no fija ese comando, así que no
+  hay nada que sincronizar allí.
+- Pendiente en el Sprint 1: (c) CI, (f) `docker-compose.yml`, (g) dataset y perfilado, (h) FR-19.
+- D15: los tests viven en `ai-service/tests/`, nunca dentro de `app/`. Con `COPY app/ app/` en el
+    Dockerfile, un test dentro de `app/` viajaría a la imagen de producción importando `pytest` y
+    `fastapi.testclient`, que con `--no-dev` no están instalados. Es además la ubicación de `04` §11.
+    | Reversible: sí.
+  - D16: `[tool.pytest.ini_options] pythonpath = ["."]`. Con `package = false` el proyecto no se instala
+    y el modo `prepend` de pytest pone `tests/` en `sys.path`, no la raíz, así que `import app` falla.
+    | Alternativas: un `conftest.py` vacío en la raíz; `package = true` con backend de build | Motivo:
+    una línea explícita y sin archivo fantasma | Reversible: sí.
+  - D17: dependencia de test `httpx2==2.13.1` en lugar de `httpx`. `starlette.testclient` marcó como
+    obsoleto el backend httpx 0.x. Verificado: `TestClient` funciona sin advertencias. | Reversible: sí.
