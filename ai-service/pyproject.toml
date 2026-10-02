@@ -1,0 +1,72 @@
+[project]
+name = "pipemend-ai-service"
+version = "0.1.0"
+description = "PipeMend ai-service - LLM triage and schema-drift analysis behind a versioned HTTP contract"
+# Python pinned by ADR-0006. The upper bound is deliberate: a major runtime bump needs a new ADR.
+requires-python = ">=3.14,<3.15"
+
+# Exact patch versions, as ADR-0006 requires them to be fixed in this file during Sprint 1.
+# uv.lock is the reproducible source of truth; these pins keep the intent visible in review.
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    # NFR-08 names structlog or python-json-logger; structlog is chosen because contextvars make
+    # batchId/requestId correlation cheap once the triage endpoint lands.
+    "structlog==26.1.0",
+]
+
+# Added with `uv add --dev`. Never needed at runtime: the image is built with --no-dev.
+[dependency-groups]
+dev = [
+    "httpx2==2.13.1",
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "ruff==0.16.9",
+]
+
+[tool.uv]
+# This is an application, not a library: uv installs the dependencies but never the project
+# itself, so no build backend is needed.
+package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "S",         # bandit
+    "C4",        # comprehensions
+    "DTZ",       # naive datetimes - NFR-13 and docs/09 section 6 forbid an implicit clock
+    "PT",        # pytest style
+    "RET",       # return consistency
+    "SIM",       # simplify
+    "PTH",       # pathlib over os.path
+    "ASYNC",     # NFR-10: no blocking client inside an async endpoint
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is how pytest asserts.
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["app"]
+strict = true
+warn_unreachable = true
+# docs/09 section 7 bis, rule 6: modern typing (X | None, native generics) without
+# `from __future__ import annotations`.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers --strict-config"
