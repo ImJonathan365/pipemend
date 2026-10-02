@@ -157,3 +157,8 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados: `.github/workflows/ci.yml` — creación inicial, con aprobación
   explícita del owner en la sesión. No se quita ningún paso ni se baja ningún umbral.
 - Pendiente en el Sprint 1: (f) `docker-compose.yml`, (g) dataset y perfilado, (h) FR-19.
+- D23: `astral-sh/setup-uv` se fija a la release exacta `v10.2.0`. La action no publica tags
+    flotantes de major más allá de `v7` (`v8`, `v9` y `v10` devuelven 404), así que `@v10` no resuelve y
+    el job fallaba antes de ejecutar nada. Las `actions/*` y `gradle/actions` se quedan en major flotante,
+    que sí mantienen. | Reversible: sí.
+
