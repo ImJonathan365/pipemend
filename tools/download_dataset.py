@@ -56,6 +56,7 @@ LEGACY_HEADERS = [
     "Country",
 ]
 
+
 class Source:
     def __init__(self, key: str, url: str, xlsx: str, csv_name: str, headers: list[str]) -> None:
         self.key = key
@@ -82,6 +83,7 @@ LEGACY = Source(
 )
 SOURCES = [CURRENT, LEGACY]
 
+
 def download(force: bool = False) -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     for source in SOURCES:
@@ -91,7 +93,8 @@ def download(force: bool = False) -> None:
         archive = RAW_DIR / f"{source.key}.zip"
         print(f"  downloading {source.url}")
         try:
-            urllib.request.urlretrieve(source.url, archive)
+            # S310 wants the scheme validated; source.url is a hardcoded https constant above.
+            urllib.request.urlretrieve(source.url, archive)  # noqa: S310
         except OSError as exc:
             print(
                 f"\nERROR: could not download {source.url}\n  {exc}\n\n"
@@ -109,6 +112,7 @@ def download(force: bool = False) -> None:
                 shutil.copyfileobj(src, dst)
         archive.unlink()
         print(f"  {source.xlsx.name}: {source.xlsx.stat().st_size} bytes")
+
 
 def _cell_to_text(value: object) -> str:
     if value is None:
@@ -251,11 +255,20 @@ class Profile:
         except ArithmeticError:
             self.unparsable["Price"] += 1
         else:
-            self.price_scale[max(0, -price.as_tuple().exponent)] += 1  # type: ignore[operator]
-            if price < 0:
-                self.price_negative += 1
-            self.price_min = price if self.price_min is None else min(self.price_min, price)
-            self.price_max = price if self.price_max is None else max(self.price_max, price)
+            # Decimal("NaN") and Decimal("Infinity") parse without raising, and their exponent is
+            # a string ("n", "F") instead of an int, so negating it would abort the whole run with
+            # a TypeError that `except ArithmeticError` never sees. Comparisons against NaN are
+            # also meaningless, which would silently corrupt the min/max range. A non-finite price
+            # is not a value the schema can accept, so it counts as unparsable.
+            exponent = price.as_tuple().exponent
+            if not isinstance(exponent, int):
+                self.unparsable["Price"] += 1
+            else:
+                self.price_scale[max(0, -exponent)] += 1
+                if price < 0:
+                    self.price_negative += 1
+                self.price_min = price if self.price_min is None else min(self.price_min, price)
+                self.price_max = price if self.price_max is None else max(self.price_max, price)
 
         try:
             moment = datetime.strptime(row["InvoiceDate"], DATE_FORMAT)
@@ -485,7 +498,10 @@ def profile() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # A literal, not __doc__: python -OO strips docstrings, which would make __doc__ None here.
+    parser = argparse.ArgumentParser(
+        description="Prepare the Online Retail II dataset (docs/10 section 2)."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     download_parser = sub.add_parser("download", help="fetch both UCI archives into data/raw/")
     download_parser.add_argument(
