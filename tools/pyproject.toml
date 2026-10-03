@@ -1,0 +1,58 @@
+[project]
+name = "pipemend-tools"
+version = "0.1.0"
+description = "PipeMend dataset tooling - download, convert, profile and dirty-data generation"
+# Python pinned by ADR-0006, same bound as ai-service.
+requires-python = ">=3.14,<3.15"
+
+# Exact patch versions. AC-19.3 requires byte-identical output for a given seed, which means
+# pinning the libraries too; uv.lock pins the transitive tree on top of this.
+dependencies = [
+    # Excel reader. Deliberately NOT pandas: every number in a .xlsx is a float, and pandas'
+    # own conversion would reintroduce the exact defects docs/10 section 2 step 2 warns about
+    # (Customer ID 13085 becoming "13085.0", Price 2.55 becoming 2.5499999999999998).
+    "openpyxl==3.1.5",
+]
+
+[dependency-groups]
+dev = [
+    "mypy==2.3.1",
+    "ruff==0.16.9",
+    "types-openpyxl==3.1.5.20260827",
+]
+
+[tool.uv]
+# Scripts, not a library: uv installs the dependencies but never the project itself.
+package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "S",         # bandit
+    "C4",        # comprehensions
+    "DTZ",       # naive datetimes
+    "RET",       # return consistency
+    "SIM",       # simplify
+    "PTH",       # pathlib over os.path
+    "RUF",
+]
+# DTZ001/DTZ005/DTZ007: this tool stamps a local report date and parses the dataset's naive timestamps.
+# The dataset carries no timezone (docs/05 section 1 documents invoice_date as origin-local
+# time), so a tz-aware datetime here would invent information. This exemption is for tools only:
+# validation code in either service receives an injected Clock (docs/09 section 6).
+ignore = ["DTZ001", "DTZ005", "DTZ007"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["."]
+strict = true
+warn_unreachable = true
