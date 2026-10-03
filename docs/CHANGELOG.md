@@ -213,3 +213,36 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `docs/04-arquitectura.md` §1 — el diagrama decía `red: pipemend-net`, pero §10 no declara bloque
     `networks`, así que compose crea `pipemend_default`. Pasa a decir `proyecto: pipemend`, que es el
     `name:` real. Sin cambio de comportamiento.
+
+## Sprint 1 — Descarga y perfilado del dataset (2026-10-02)
+- Hecho: proyecto `tools/` con uv (`pyproject.toml` + `uv.lock`), `tools/download_dataset.py` con
+  subcomandos `download` / `convert` / `profile` / `all`, y `docs/perfilado-dataset.md` generado sobre
+  1.067.371 filas reales.
+- **Cabeceras confirmadas** (tarea del Sprint 1 en `10` §2): el archivo real usa `Invoice`, `StockCode`,
+  `Description`, `Quantity`, `InvoiceDate`, `Price`, `Customer ID`, `Country`, exactamente las de `02` §2.
+  La ficha de UCI publica las de la versión anterior, que es el caso de drift de FR-05.
+- Decisiones:
+  - D27: `tools/` es un tercer proyecto uv con lockfile propio, no un grupo dev de `ai-service`.
+    `ai-service` es un servicio stateless y no tiene nada que ver con preparar datasets (`04` §6.2), y
+    AC-19.3 exige fijar también las versiones de librerías, que solo un lockfile garantiza.
+    | Reversible: sí | Aprobado por: owner.
+  - D28: lector de xlsx con **openpyxl**, nunca pandas. En un .xlsx todo número es un float; la
+    conversión de pandas reintroduciría justo los defectos que `10` §2 paso 2 advierte
+    (`Customer ID` 13085 → `"13085.0"`, `Price` 2.55 → 2.5499999999999998). La conversión usa
+    `Decimal(repr(v))`, que es el valor exacto de la celda sin redondeo ni artefactos.
+    | Reversible: sí.
+  - D29: el perfilado se hace sobre el **CSV generado**, no sobre el xlsx, para medir exactamente el
+    texto que ingerirá el pipeline. | Reversible: sí.
+  - D30: el script **no valida** nada. La autoridad de validación es el validador Java, que lee el
+    mismo YAML declarativo; aquí solo se mide cuánto encaja el dato real con las reglas propuestas.
+    | Reversible: sí.
+  - D31: (g) se parte en dos ramas. El contenido de los tres archivos de schema depende del perfilado
+    como evidencia, así que congelarlos va en su propio PR revisable. | Aprobado por: owner.
+  - D32: `ruff` con `DTZ001/DTZ005/DTZ007` ignorados **solo en `tools/`**. El dataset no trae zona
+    horaria (`05` §1 documenta `invoice_date` como hora local del origen) y una fecha tz-aware
+    inventaría información. La exención no alcanza al código de validación, que recibe un `Clock`
+    inyectado (`09` §6). | Reversible: sí.
+- Archivos protegidos modificados: `AGENTS.md` — dos líneas de comandos para `tools/`, con
+  aprobación explícita del owner. `docs/09` no fija esos comandos, así que no hay nada que sincronizar.
+- Pendiente: (g2) congelar `countries.v1.txt`, `country-aliases.v1.yaml` y `sales_transaction.v1.yaml`
+  con la evidencia del perfilado, y construir las muestras del baseline; luego (h) FR-19.
