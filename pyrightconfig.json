@@ -1,0 +1,15 @@
+{
+  "typeCheckingMode": "standard",
+  "reportMissingModuleSource": "none",
+  "exclude": ["**/.venv", "**/__pycache__", "**/build", "**/.gradle", "data", "pipeline-service"],
+  "executionEnvironments": [
+    {
+      "root": "ai-service",
+      "extraPaths": ["ai-service/.venv/lib/python3.14/site-packages"]
+    },
+    {
+      "root": "tools",
+      "extraPaths": ["tools/.venv/lib/python3.14/site-packages"]
+    }
+  ]
+}
