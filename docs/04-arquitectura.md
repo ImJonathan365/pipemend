@@ -4,7 +4,7 @@
 
 ```
                          ┌───────────────────────────────────────────────────────────┐
-                         │                    docker compose (red: pipemend-net)      │
+                         │                    docker compose (proyecto: pipemend)      │
                          │                                                            │
   Usuario / Evaluador    │   ┌──────────────────────────────┐   HTTP/JSON (sync)      │
   (curl, Swagger UI)     │   │      pipeline-service        │   POST /v1/triage       │
@@ -420,9 +420,11 @@ services:
       postgres: { condition: service_healthy }
       ai-service: { condition: service_healthy }
     healthcheck:
-      # Verificar en el Sprint 1 que la imagen runtime tenga wget o curl; si no, instalarlo
-      # en el Dockerfile o usar un healthcheck sin binarios externos.
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      # Verificado en el Sprint 1: la imagen runtime instala `curl` explícitamente, así que basta
+      # `curl -f`, porque Actuator mapea DOWN a HTTP 503. Se descarta `grep -q UP`: con
+      # `show-details: always`, una respuesta `{"status":"DOWN","components":{"db":{"status":"UP"}}}`
+      # lo satisfaría y daría un verde falso.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
       interval: 10s
       timeout: 3s
       retries: 30

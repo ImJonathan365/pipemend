@@ -204,6 +204,12 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     no divergen. | Reversible: sí.
   - D26: verificado contra el Dockerfile oficial de `docker-library/postgres`: en 18+ `PGDATA` es
     `/var/lib/postgresql/18/docker` y el `VOLUME` es `/var/lib/postgresql`. El volumen se monta ahí.
-- Archivos protegidos modificados: `docker-compose.yml` — creación inicial con los tres servicios de
-  `04` §10, sin añadir ninguno. Aprobación explícita del owner en la sesión.
-- Pendiente en el Sprint 1: (g) descarga y perfilado del dataset, (h) FR-19.
+- Archivos protegidos modificados (todos con aprobación explícita del owner en la sesión):
+  - `docker-compose.yml` — creación inicial con los tres servicios de `04` §10, sin añadir ninguno.
+  - `docs/04-arquitectura.md` §10 — el healthcheck de referencia pasa de `wget ... | grep -q UP` a
+    `curl -fsS`, y el comentario "Verificar en el Sprint 1 si la imagen trae wget o curl" se sustituye
+    por el resultado de esa verificación. Alinea el documento con el archivo real y elimina un falso
+    positivo que cualquiera habría heredado al copiarlo.
+  - `docs/04-arquitectura.md` §1 — el diagrama decía `red: pipemend-net`, pero §10 no declara bloque
+    `networks`, así que compose crea `pipemend_default`. Pasa a decir `proyecto: pipemend`, que es el
+    `name:` real. Sin cambio de comportamiento.
