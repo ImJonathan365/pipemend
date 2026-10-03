@@ -162,3 +162,54 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     el job fallaba antes de ejecutar nada. Las `actions/*` y `gradle/actions` se quedan en major flotante,
     que sí mantienen. | Reversible: sí.
 
+## Sprint 1 — Docker Compose y corrección de configuración (2026-10-01)
+- Hecho: `docker-compose.yml` con los tres servicios de `04` §10, healthchecks y `depends_on` por
+  `service_healthy`; `cp .env.example .env && docker compose up --build` levanta el stack (NFR-01).
+- Corregido: `application.yml` tenía dos valores truncados al pegarlos. `spring.flyway.locations` decía
+  `classpath:db/migra`, y como `fail-on-missing-locations` es `false` por defecto, Flyway **no fallaba**:
+  habría ignorado en silencio la `V1` del Sprint 2. Y `management.endpoints.web.exposure.include` decía
+  `health,info,metr`, dejando `/actuator/metrics` sin exponer (NFR-09). Ninguna de las dos rompía la CI.
+- Decisiones:
+  - D24: el healthcheck de `pipeline-service` es `curl -fsS /actuator/health`, no el
+    `wget ... | grep -q UP` de `04` §10. La imagen trae `curl` (D7, que resolvió el "verificar en el
+    Sprint 1" de ese mismo comentario), y el `grep UP` daría verde falso ante
+    `{"status":"DOWN","components":{"db":{"status":"UP"}}}` porque Actuator mapea DOWN a HTTP 503.
+    | Reversible: sí.
+  - D25: compose pasa a `pipeline-service` todas las `AI_*`/`PIPELINE_*` de `04` §8, aunque varias no
+    las lea ningún código hasta los Sprints 2-4. No son stubs de código (prohibidos por `01` X-*), son
+    variables de entorno que ese documento prescribe; así la configuración documentada y el stack real
+    no divergen. | Reversible: sí.
+  - D26: verificado contra el Dockerfile oficial de `docker-library/postgres`: en 18+ `PGDATA` es
+    `/var/lib/postgresql/18/docker` y el `VOLUME` es `/var/lib/postgresql`. El volumen se monta ahí.
+- Archivos protegidos modificados: `docker-compose.yml` — creación inicial con los tres servicios de
+  `04` §10, sin añadir ninguno. Aprobación explícita del owner en la sesión.
+- Pendiente en el Sprint 1: (g) descarga y perfilado del dataset, (h) FR-19.
+
+## Sprint 1 — Docker Compose y corrección de configuración (2026-10-01)
+- Hecho: `docker-compose.yml` con los tres servicios de `04` §10, healthchecks y `depends_on` por
+  `service_healthy`; `cp .env.example .env && docker compose up --build` levanta el stack (NFR-01).
+- Corregido: `application.yml` tenía dos valores truncados al pegarlos. `spring.flyway.locations` decía
+  `classpath:db/migra`, y como `fail-on-missing-locations` es `false` por defecto, Flyway **no fallaba**:
+  habría ignorado en silencio la `V1` del Sprint 2. Y `management.endpoints.web.exposure.include` decía
+  `health,info,metr`, dejando `/actuator/metrics` sin exponer (NFR-09). Ninguna de las dos rompía la CI.
+- Decisiones:
+  - D24: el healthcheck de `pipeline-service` es `curl -fsS /actuator/health`, no el
+    `wget ... | grep -q UP` de `04` §10. La imagen trae `curl` (D7, que resolvió el "verificar en el
+    Sprint 1" de ese mismo comentario), y el `grep UP` daría verde falso ante
+    `{"status":"DOWN","components":{"db":{"status":"UP"}}}` porque Actuator mapea DOWN a HTTP 503.
+    | Reversible: sí.
+  - D25: compose pasa a `pipeline-service` todas las `AI_*`/`PIPELINE_*` de `04` §8, aunque varias no
+    las lea ningún código hasta los Sprints 2-4. No son stubs de código (prohibidos por `01` X-*), son
+    variables de entorno que ese documento prescribe; así la configuración documentada y el stack real
+    no divergen. | Reversible: sí.
+  - D26: verificado contra el Dockerfile oficial de `docker-library/postgres`: en 18+ `PGDATA` es
+    `/var/lib/postgresql/18/docker` y el `VOLUME` es `/var/lib/postgresql`. El volumen se monta ahí.
+- Archivos protegidos modificados (todos con aprobación explícita del owner en la sesión):
+  - `docker-compose.yml` — creación inicial con los tres servicios de `04` §10, sin añadir ninguno.
+  - `docs/04-arquitectura.md` §10 — el healthcheck de referencia pasa de `wget ... | grep -q UP` a
+    `curl -fsS`, y el comentario "Verificar en el Sprint 1 si la imagen trae wget o curl" se sustituye
+    por el resultado de esa verificación. Alinea el documento con el archivo real y elimina un falso
+    positivo que cualquiera habría heredado al copiarlo.
+  - `docs/04-arquitectura.md` §1 — el diagrama decía `red: pipemend-net`, pero §10 no declara bloque
+    `networks`, así que compose crea `pipemend_default`. Pasa a decir `proyecto: pipemend`, que es el
+    `name:` real. Sin cambio de comportamiento.

@@ -1,0 +1,94 @@
+name: pipemend
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pipemend}
+      POSTGRES_USER: ${POSTGRES_USER:-pipemend}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipemend}
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]
+    # PostgreSQL 18 moved PGDATA to /var/lib/postgresql/18/docker and the image's VOLUME to
+    # /var/lib/postgresql. Mounting on /var/lib/postgresql/data makes startup fail.
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      # $$ keeps the variable unexpanded by compose so the container's shell resolves it.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ai-service:
+    build: ./ai-service
+    # No env_file: every service gets only the variables it needs (NFR-14, least privilege).
+    # LLM_API_KEY reaches this service and nothing else. Compose still reads .env to interpolate.
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-mock-rules-v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-20}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-1024}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+      LLM_MAX_CALLS_PER_DAY: ${LLM_MAX_CALLS_PER_DAY:-2000}
+      AI_REQUEST_DEADLINE_SECONDS: ${AI_REQUEST_DEADLINE_SECONDS:-25}
+      PROMPT_VERSION_TRIAGE: ${PROMPT_VERSION_TRIAGE:-triage_v1}
+      PROMPT_VERSION_SCHEMA: ${PROMPT_VERSION_SCHEMA:-schema_drift_v1}
+      AI_EXPLANATION_LANGUAGE: ${AI_EXPLANATION_LANGUAGE:-es}
+      TRIAGE_CACHE_MAX_ENTRIES: ${TRIAGE_CACHE_MAX_ENTRIES:-5000}
+      TRIAGE_CACHE_TTL_SECONDS: ${TRIAGE_CACHE_TTL_SECONDS:-86400}
+    ports: ["${AI_HOST_PORT:-8000}:8000"]
+    # Lets LLM_BASE_URL point at Ollama running on the host (docs/04 section 9).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    healthcheck:
+      # /health answers 200 while the process is alive, even when the provider is degraded: the
+      # healthcheck only proves the service responds (docs/06 A.3). urlopen raises on non-2xx.
+      test:
+        ["CMD", "python", "-c",
+         "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pipeline-service:
+    build: ./pipeline-service
+    # The PostgreSQL credentials reach only this service and postgres (NFR-14, R-36). Several of
+    # the AI_* / PIPELINE_* values below are not read by any code yet: they arrive with FR-08,
+    # FR-09 and FR-01 in Sprints 2-4. They are passed now so docs/04 section 8 and the running
+    # stack never drift apart.
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pipemend}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-pipemend}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-pipemend}
+      AI_SERVICE_BASE_URL: http://ai-service:8000
+      AI_CLIENT_CONNECT_TIMEOUT_MS: ${AI_CLIENT_CONNECT_TIMEOUT_MS:-2000}
+      AI_CLIENT_READ_TIMEOUT_MS: ${AI_CLIENT_READ_TIMEOUT_MS:-30000}
+      AI_MIN_CONFIDENCE: ${AI_MIN_CONFIDENCE:-0.85}
+      AI_ENUM_MIN_CONFIDENCE: ${AI_ENUM_MIN_CONFIDENCE:-0.90}
+      AI_SCHEMA_MIN_CONFIDENCE: ${AI_SCHEMA_MIN_CONFIDENCE:-0.90}
+      AI_MAX_CALLS_PER_BATCH: ${AI_MAX_CALLS_PER_BATCH:-500}
+      AI_SCHEMA_SAMPLE_ROWS: ${AI_SCHEMA_SAMPLE_ROWS:-100}
+      AI_SCHEMA_MAX_INVALID_RATE: ${AI_SCHEMA_MAX_INVALID_RATE:-0.20}
+      AI_REQUEST_DEADLINE_SECONDS: ${AI_REQUEST_DEADLINE_SECONDS:-25}
+      AI_REDACT_FIELDS: ${AI_REDACT_FIELDS:-customer_id}
+      AI_SEND_FULL_RECORD: ${AI_SEND_FULL_RECORD:-true}
+      PIPELINE_CHUNK_SIZE: ${PIPELINE_CHUNK_SIZE:-100}
+      PIPELINE_MAX_UPLOAD_MB: ${PIPELINE_MAX_UPLOAD_MB:-50}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--Xmx512m}
+    ports: ["${PIPELINE_HOST_PORT:-8080}:8080"]
+    # Uploaded files survive a restart so a batch can be resumed (AC-01.6).
+    volumes: [inbox:/data/inbox]
+    depends_on:
+      postgres: { condition: service_healthy }
+      ai-service: { condition: service_healthy }
+    healthcheck:
+      # Actuator maps DOWN to HTTP 503, so `curl -f` alone is the whole check. Grepping for "UP"
+      # would match a healthy component inside an unhealthy response and report a false green.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
+  inbox:
