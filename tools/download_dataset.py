@@ -1,37 +1,46 @@
 #!/usr/bin/env python
-"""Prepare the Online Retail II dataset: download, convert to CSV and profile it.
+"""Prepare the Online Retail II dataset: download, convert to CSV, profile it and sample it.
 
-Implements docs/10 section 2. Three subcommands, meant to be run in order:
+Implements docs/10 section 2. Four subcommands, meant to be run in order:
 
     download  fetch both UCI archives into data/raw/ (git-ignored)
     convert   turn the .xlsx sheets into canonical CSV, also in data/raw/
     profile   measure the CSV and write docs/perfilado-dataset.md
+    samples   build the baseline and natural/drift samples (steps 4-6)
 
 The profiling report is the evidence used to decide the country-catalogue exclusions, the
 alias list and the final field rules before sales_transaction.v1.yaml is frozen, in the
 mandatory order of docs/10 section 2, step 3 bis. The samples in data/samples/ are built
 afterwards, once the schema exists.
 
-Nothing here validates records: the authority on validation is the Java validator in
-pipeline-service, which reads the same declarative YAML schema.
+The baseline filter reads the frozen YAML but is not a validator: it only keeps rows it is
+certain about. The authority on validation is the Java validator in pipeline-service (D40).
 """
 
 import argparse
 import csv
+import random
 import re
 import shutil
 import sys
 import urllib.request
 import zipfile
 from collections import Counter
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
+import yaml
 from openpyxl import load_workbook
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = REPO_ROOT / "data" / "raw"
+SAMPLES_DIR = REPO_ROOT / "data" / "samples"
+SCHEMA_DIR = REPO_ROOT / "pipeline-service" / "src" / "main" / "resources" / "schemas"
+SCHEMA_FILE = SCHEMA_DIR / "sales_transaction.v1.yaml"
 PROFILE_REPORT = REPO_ROOT / "docs" / "perfilado-dataset.md"
 
 HEADERS = [
@@ -494,6 +503,205 @@ def profile() -> None:
     )
 
 
+SEED = 42
+CLEAN_TARGETS = {
+    1_000: SAMPLES_DIR / "clean-1k.csv",
+    10_000: RAW_DIR / "clean-10k.csv",
+    100_000: RAW_DIR / "clean-100k.csv",
+}
+RAW_NATURAL_TARGET = SAMPLES_DIR / "raw-natural-2k.csv"
+RAW_NATURAL_SIZE = 2_000
+DRIFT_TARGET = SAMPLES_DIR / "drift-legacy-headers.csv"
+DRIFT_SIZE = 1_000
+
+SCHEMA_KEYS = {"name", "version", "nullTokens", "fields", "businessRules", "derived"}
+FIELD_KEYS = {
+    "name",
+    "sourceHeader",
+    "type",
+    "required",
+    "pattern",
+    "maxLength",
+    "min",
+    "max",
+    "notEqualTo",
+    "format",
+    "scale",
+    "decimalSeparator",
+    "catalogue",
+    "caseSensitive",
+}
+BUSINESS_RULES = {"BR-01", "BR-02"}
+# Canonical shapes only. re.ASCII: Python's \d also matches non-ASCII digits, Java's does not.
+INTEGER_SHAPE = re.compile(r"-?[1-9]\d*", re.ASCII)
+DATE_FORMATS = {
+    "yyyy-MM-dd HH:mm:ss": (
+        re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", re.ASCII),
+        "%Y-%m-%d %H:%M:%S",
+    ),
+}
+
+
+def _value_check(spec: dict[str, Any]) -> Callable[[str], bool]:
+    kind = spec["type"]
+    if kind == "string":
+        pattern = re.compile(spec["pattern"], re.ASCII) if "pattern" in spec else None
+        max_length = int(spec["maxLength"]) if "maxLength" in spec else None
+
+        def check_string(value: str) -> bool:
+            # fullmatch, not match: Python's $ also matches before a trailing newline.
+            if pattern is not None and pattern.fullmatch(value) is None:
+                return False
+            # Java's String.length() counts UTF-16 units, never fewer than Python's code points.
+            return max_length is None or len(value.encode("utf-16-le")) // 2 <= max_length
+
+        return check_string
+
+    if kind == "integer":
+        low, high = int(spec["min"]), int(spec["max"])
+        excluded = int(spec["notEqualTo"]) if "notEqualTo" in spec else None
+
+        def check_integer(value: str) -> bool:
+            if INTEGER_SHAPE.fullmatch(value) is None:
+                return False
+            number = int(value)
+            return low <= number <= high and number != excluded
+
+        return check_integer
+
+    if kind == "datetime":
+        if spec["format"] not in DATE_FORMATS:
+            raise SystemExit(f"{spec['name']}: unsupported date format {spec['format']!r}")
+        shape, layout = DATE_FORMATS[spec["format"]]
+        earliest = datetime.strptime(str(spec["min"]), layout)
+        latest = datetime.now() if spec["max"] == "now" else datetime.strptime(spec["max"], layout)
+
+        def check_datetime(value: str) -> bool:
+            # strptime alone accepts "2010-1-5 8:05:00"; the shape check keeps it canonical.
+            if shape.fullmatch(value) is None:
+                return False
+            try:
+                moment = datetime.strptime(value, layout)
+            except ValueError:
+                return False
+            return earliest <= moment <= latest
+
+        return check_datetime
+
+    if kind == "decimal":
+        if spec["decimalSeparator"] != ".":
+            raise SystemExit(f"{spec['name']}: unsupported decimal separator")
+        shape = re.compile(rf"-?(?:0|[1-9]\d*)(?:\.\d{{1,{int(spec['scale'])}}})?", re.ASCII)
+        low_price, high_price = Decimal(str(spec["min"])), Decimal(str(spec["max"]))
+
+        def check_decimal(value: str) -> bool:
+            return shape.fullmatch(value) is not None and low_price <= Decimal(value) <= high_price
+
+        return check_decimal
+
+    if kind == "enum":
+        lines = (SCHEMA_DIR / spec["catalogue"]).read_text(encoding="utf-8").splitlines()
+        catalogue = frozenset(line for line in lines if line)
+        return lambda value: value in catalogue
+
+    raise SystemExit(f"{spec['name']}: unsupported type {kind!r}")
+
+
+class BaselineFilter:
+    """Keeps a row only if it is certain the row passes schema v1; any doubt drops it (D40)."""
+
+    def __init__(self, schema_file: Path) -> None:
+        schema = yaml.safe_load(schema_file.read_text(encoding="utf-8"))
+        # Fail on anything this filter does not implement, instead of silently ignoring a rule.
+        if set(schema) - SCHEMA_KEYS:
+            raise SystemExit(f"unknown schema keys: {sorted(set(schema) - SCHEMA_KEYS)}")
+        if {rule["code"] for rule in schema["businessRules"]} != BUSINESS_RULES:
+            raise SystemExit("business rules differ from the BR-01/BR-02 this filter implements")
+        for spec in schema["fields"]:
+            if set(spec) - FIELD_KEYS or spec.get("caseSensitive", True) is not True:
+                raise SystemExit(f"{spec['name']}: rule not supported by the baseline filter")
+
+        self.null_tokens = frozenset(schema["nullTokens"])
+        self.headers: list[str] = [spec["sourceHeader"] for spec in schema["fields"]]
+        self.checks = [(bool(spec["required"]), _value_check(spec)) for spec in schema["fields"]]
+        names = [spec["name"] for spec in schema["fields"]]
+        self.invoice = names.index("invoice_no")
+        self.quantity = names.index("quantity")
+
+    def accepts(self, row: list[str]) -> bool:
+        if len(row) != len(self.checks):
+            return False
+        for (required, check), value in zip(self.checks, row, strict=True):
+            if value.strip(" \t") in self.null_tokens:
+                if required:
+                    return False
+                if value == "":
+                    continue
+            if not check(value):
+                return False
+        # BR-01 / BR-02 only carry a description in the YAML, so they are coded here as in Java.
+        quantity = int(row[self.quantity])
+        return quantity < 0 if row[self.invoice].startswith("C") else quantity > 0
+
+
+def _seeded() -> random.Random:
+    # S311 is about cryptography; here the fixed seed is the point (AC-19.3).
+    return random.Random(SEED)  # noqa: S311
+
+
+def _read_rows(path: Path) -> Iterator[list[str]]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        yield from csv.reader(handle)
+
+
+def _write_samples(source: Path, picks: dict[Path, set[int]]) -> None:
+    """Copy the chosen data rows (0-based) of source into each target, in file order."""
+    rows = _read_rows(source)
+    header = next(rows)
+    with ExitStack() as stack:
+        writers = []
+        for target, chosen in picks.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            handle = stack.enter_context(target.open("w", encoding="utf-8", newline=""))
+            writer = csv.writer(handle, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(header)
+            writers.append((chosen, writer))
+        for index, row in enumerate(rows):
+            for chosen, writer in writers:
+                if index in chosen:
+                    writer.writerow(row)
+    for target, chosen in picks.items():
+        print(f"  {target.relative_to(REPO_ROOT)}: {len(chosen)} rows")
+
+
+def samples() -> None:
+    for source in SOURCES:
+        if not source.csv.exists():
+            raise SystemExit(f"{source.csv} not found - run `convert` first")
+
+    baseline = BaselineFilter(SCHEMA_FILE)
+    rows = _read_rows(CURRENT.csv)
+    if next(rows) != baseline.headers:
+        raise SystemExit(f"{CURRENT.csv.name} headers do not match {SCHEMA_FILE.name}")
+    total = 0
+    clean: list[int] = []
+    for index, row in enumerate(rows):
+        total += 1
+        if baseline.accepts(row):
+            clean.append(index)
+    print(f"  baseline: {len(clean)} of {total} rows pass schema v1")
+
+    # One draw sliced three ways, so clean-1k is a subset of clean-10k and of clean-100k.
+    drawn = _seeded().sample(clean, max(CLEAN_TARGETS))
+    picks = {target: set(drawn[:size]) for size, target in CLEAN_TARGETS.items()}
+    picks[RAW_NATURAL_TARGET] = set(_seeded().sample(range(total), RAW_NATURAL_SIZE))
+    _write_samples(CURRENT.csv, picks)
+
+    legacy_total = sum(1 for _ in _read_rows(LEGACY.csv)) - 1
+    drift = set(_seeded().sample(range(legacy_total), DRIFT_SIZE))
+    _write_samples(LEGACY.csv, {DRIFT_TARGET: drift})
+
+
 # --------------------------------------------------------------------------------------
 
 
@@ -509,7 +717,8 @@ def main() -> None:
     )
     sub.add_parser("convert", help="convert the .xlsx sheets to canonical CSV")
     sub.add_parser("profile", help="write docs/perfilado-dataset.md from the CSV")
-    sub.add_parser("all", help="download, convert and profile in order")
+    sub.add_parser("samples", help="build the baseline, natural and drift samples (seed 42)")
+    sub.add_parser("all", help="download, convert, profile and sample in order")
 
     args = parser.parse_args()
     if args.command == "download":
@@ -518,10 +727,13 @@ def main() -> None:
         convert()
     elif args.command == "profile":
         profile()
+    elif args.command == "samples":
+        samples()
     else:
         download()
         convert()
         profile()
+        samples()
 
 
 if __name__ == "__main__":
