@@ -279,3 +279,25 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `02` §2 dejaba abiertas para el Sprint 1 quedan resueltas.
 - Archivos protegidos: los tres de `schemas/` nacen aquí y pasan tras este sprint (`09` §2.1).
 - Pendiente: las muestras del baseline (paso 4-6 de `10` §2) y luego (h) FR-19.
+
+## Sprint 1 — Muestras del baseline (2026-10-04)
+- Hecho: subcomando `samples` en `tools/download_dataset.py` (pasos 4-6 de `10` §2), semilla 42.
+  `data/samples/clean-1k.csv`, `raw-natural-2k.csv` y `drift-legacy-headers.csv` versionados;
+  `clean-10k.csv` y `clean-100k.csv` en `data/raw/`. Dos ejecuciones dan archivos idénticos (sha256).
+- Baseline: 1.063.072 de 1.067.371 filas, la misma cifra y desglose que el congelado del schema.
+- Hallazgos naturales medidos: `raw-natural-2k` trae 9 filas inválidas (7 `BR-02`, 1 `BR-01`,
+  1 `Unspecified`); `drift-legacy-headers` trae 2 (`BR-02`), lejos del 20 % de AC-05.7.
+- Decisiones:
+  - D40: enmienda D30. El script filtra el baseline leyendo `sales_transaction.v1.yaml` y
+    `countries.v1.txt`, pero no es un validador: solo acepta la forma canónica y aborta ante
+    cualquier regla del YAML que no implemente. La autoridad sigue siendo el validador Java, que lo
+    comprueba en el Sprint 2 (`clean-1k` → 1000 `DIRECT`) y en AC-19.4. Nueva dependencia de
+    `tools/`: PyYAML 6.0.3. | Alternativas: reglas escritas a mano en Python; esperar al validador
+    Java | Reversible: sí | Aprobado por: owner.
+  - D41: una sola extracción de 100k sobre el baseline, cortada en prefijos (`clean-1k` ⊂ `clean-10k`
+    ⊂ `clean-100k`); cada muestra se escribe en el orden original del archivo, y la muestra natural y
+    la de drift usan cada una su propio generador con semilla 42. | Reversible: sí.
+  - D42: `raw-natural-2k` y `drift-legacy-headers` se muestrean sin filtrar (`10` §2 pasos 5-6).
+  - D43: `clean-10k` no se versiona: `10` §5 no lo incluye entre lo que va a git. | Reversible: sí.
+- Archivos protegidos modificados: `data/samples/**` (creación), con aprobación explícita del owner.
+- Pendiente: (h) FR-19.
