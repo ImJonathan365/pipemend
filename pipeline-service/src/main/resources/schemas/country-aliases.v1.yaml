@@ -1,0 +1,163 @@
+version: 1
+catalogue: countries.v1.txt
+
+aliases:
+
+  "Australia":
+    - "AU"
+    - "AUS"
+  "Austria":
+    - "AT"
+    - "AUT"
+    - "Österreich"
+  "Bahrain":
+    - "BH"
+    - "BHR"
+  "Belgium":
+    - "BE"
+    - "BEL"
+    - "Belgique"
+    - "België"
+  "Bermuda":
+    - "BM"
+    - "BMU"
+  "Brazil":
+    - "BR"
+    - "BRA"
+    - "Brasil"
+  "Canada":
+    - "CA"
+    - "CAN"
+  "Channel Islands":
+    - "Channel Isles"
+  "Cyprus":
+    - "CY"
+    - "CYP"
+    - "Kypros"
+  "Czech Republic":
+    - "CZ"
+    - "CZE"
+    - "Czechia"
+    - "Cesko"
+  "Denmark":
+    - "DK"
+    - "DNK"
+    - "Danmark"
+  "EIRE":
+    - "IE"
+    - "IRL"
+    - "Ireland"
+    - "Republic of Ireland"
+  "Finland":
+    - "FI"
+    - "FIN"
+    - "Suomi"
+  "France":
+    - "FR"
+    - "FRA"
+  "Germany":
+    - "DE"
+    - "DEU"
+    - "Deutschland"
+  "Greece":
+    - "GR"
+    - "GRC"
+    - "Hellas"
+    - "Ellada"
+  "Hong Kong":
+    - "HK"
+    - "HKG"
+  "Iceland":
+    - "IS"
+    - "ISL"
+    - "Ísland"
+  "Israel":
+    - "IL"
+    - "ISR"
+  "Italy":
+    - "IT"
+    - "ITA"
+    - "Italia"
+  "Japan":
+    - "JP"
+    - "JPN"
+    - "Nippon"
+  "Korea":
+    - "KR"
+    - "KOR"
+    - "South Korea"
+    - "Republic of Korea"
+  "Lebanon":
+    - "LB"
+    - "LBN"
+    - "Liban"
+  "Lithuania":
+    - "LT"
+    - "LTU"
+    - "Lietuva"
+  "Malta":
+    - "MT"
+    - "MLT"
+  "Netherlands":
+    - "NL"
+    - "NLD"
+    - "Nederland"
+    - "Holland"
+    - "The Netherlands"
+  "Nigeria":
+    - "NG"
+    - "NGA"
+  "Norway":
+    - "NO"
+    - "NOR"
+    - "Norge"
+  "Poland":
+    - "PL"
+    - "POL"
+    - "Polska"
+  "Portugal":
+    - "PT"
+    - "PRT"
+  "RSA":
+    - "ZA"
+    - "ZAF"
+    - "South Africa"
+    - "Republic of South Africa"
+  "Saudi Arabia":
+    - "SA"
+    - "SAU"
+  "Singapore":
+    - "SG"
+    - "SGP"
+  "Spain":
+    - "ES"
+    - "ESP"
+    - "España"
+  "Sweden":
+    - "SE"
+    - "SWE"
+    - "Sverige"
+  "Switzerland":
+    - "CH"
+    - "CHE"
+    - "Schweiz"
+    - "Suisse"
+    - "Svizzera"
+  "Thailand":
+    - "TH"
+    - "THA"
+  "USA":
+    - "US"
+    - "United States"
+    - "United States of America"
+  "United Arab Emirates":
+    - "AE"
+    - "ARE"
+    - "UAE"
+    - "Emirates"
+  "United Kingdom":
+    - "UK"
+    - "GB"
+    - "GBR"
+    - "Great Britain"
+    - "Britain"
