@@ -246,3 +246,36 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   aprobación explícita del owner. `docs/09` no fija esos comandos, así que no hay nada que sincronizar.
 - Pendiente: (g2) congelar `countries.v1.txt`, `country-aliases.v1.yaml` y `sales_transaction.v1.yaml`
   con la evidencia del perfilado, y construir las muestras del baseline; luego (h) FR-19.
+
+## Sprint 1 — Congelado del schema v1 (2026-10-04)
+- Hecho: `countries.v1.txt` (41 valores), `country-aliases.v1.yaml` (118 alias en 40 países) y
+  `sales_transaction.v1.yaml`, en el orden obligatorio de `10` §2 paso 3 bis. A partir de aquí : cambiarlos exige un ADR Accepted.
+- Verificado sobre las 1.067.371 filas reales: baseline limpio de **1.063.072 filas (99,60 %)**. Las
+  4.299 restantes cuadran con el perfilado: 3.457 `BR-02`, 817 `INVALID_ENUM_VALUE`
+  (= 756 `Unspecified` + 61 `European Community`), 18 precios con 3 decimales, 5 precios negativos,
+  1 `BR-01` y 1 `stock_code` con espacio final.
+- Decisiones:
+  - D35: se excluyen del catálogo **solo** `Unspecified` (756 filas) y `European Community` (61). El
+    criterio no es "¿es un estado soberano?" sino "¿identifica un destino?": esos dos no dicen dónde
+    fue la mercancía, mientras que `West Indies` (54) y `Channel Islands` (1.664) sí, aunque no seandónde
+    fue la mercancía, mientras que `West Indies` (54) y `Channel Islands` (1.664) sí, aunque no sean
+    estados. Excluirlos mandaría a cuarentena filas legítimas sin que un humano pueda resolverlas.
+    | Reversible: no sin ADR | Aprobado por: owner.
+  - D36: la regex de `stock_code` se congela tal como la propone `02` §2, sin ajustar. Estaba marcada
+    como "ajustable tras perfilado" y la evidencia dice que no hace falta: falla 1 fila de 1.067.371,
+    y es precisamente el caso de `TRIM` que se quiere detectar. El margen hasta 20 caracteres se
+    mantiene frente a los 12 observados, porque acortarlo rechazaría códigos legítimos futuros sin
+    ninguna evidencia. | Aprobado por: owner.
+  - D37: `country-aliases.v1.yaml` omite los alias que `normalize` ya resuelve (`Eire`, `Éire`,
+    `U.S.A.`). El verificador acepta el par si está en el archivo **o** por igualdad normalizada, así
+    que listarlos sería peso muerto. | Reversible: no sin ADR.
+  - D38: `England`, `Scotland` y `Wales` **no** se mapean a `United Kingdom`. Nombran lugares
+    distintos; mapearlos descartaría información en lugar de reformatearla (ADR-0008). | Reversible:
+    no sin ADR.
+  - D39: el archivo de alias se estructura por valor de catálogo, no como mapa plano alias→valor, para
+    que una colisión (dos países reclamando el mismo alias) se vea en la revisión. El cargador debe
+    fallar al arrancar si hay colisión o si una clave no está en el catálogo.
+- Cabeceras confirmadas contra el archivo real y regex de `stock_code` cerrada: las dos tareas que
+  `02` §2 dejaba abiertas para el Sprint 1 quedan resueltas.
+- Archivos protegidos: los tres de `schemas/` nacen aquí y pasan tras este sprint (`09` §2.1).
+- Pendiente: las muestras del baseline (paso 4-6 de `10` §2) y luego (h) FR-19.

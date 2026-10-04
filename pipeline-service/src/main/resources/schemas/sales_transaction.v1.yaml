@@ -1,0 +1,108 @@
+name: sales_transaction
+version: 1
+
+# Recognised null tokens. In a REQUIRED field any of these, after trim, is MISSING_REQUIRED_FIELD.
+# In an OPTIONAL field the empty string means null (valid); any other token is validated as ordinary
+# text, which is why customer_id = "N/A" fails PATTERN_MISMATCH and becomes a NULLIFY_TOKEN
+# candidate, while description = "N/A" is loaded as-is (the MVP does not normalise free text).
+nullTokens: ["", "N/A", "NA", "null", "NULL", "None", "-", "?"]
+
+fields:
+  - name: invoice_no
+    sourceHeader: Invoice
+    type: string
+    required: true
+    # C = cancellation, A = adjustment. The profiling found 100% of 1,067,371 rows match, with
+    # 19,494 C-prefixed and 6 A-prefixed.
+    pattern: "^[CA]?\\d{6}$"
+
+  - name: stock_code
+    sourceHeader: StockCode
+    type: string
+    required: true
+    # 1-20 characters, no leading or trailing space. The pattern already caps the length, so no
+    # separate maxLength is declared: a longer value fails PATTERN_MISMATCH first and docs/02
+    # section 3.1 allows only one violation per field.
+    pattern: "^[A-Za-z0-9](?:[A-Za-z0-9_ \\-]{0,18}[A-Za-z0-9_])?$"
+    # Not negotiable: the real dataset holds 173 groups of codes that differ only in case
+    # (48173C / 48173c, 84596F / 84596f, ...). They are different products, which is why
+    # NORMALIZE_CASE is forbidden on this field (ADR-0008).
+    caseSensitive: true
+
+  - name: description
+    sourceHeader: Description
+    type: string
+    required: false
+    # The only field where MAX_LENGTH_EXCEEDED can fire. No row in the real dataset exceeds it;
+    # 213,035 rows do carry leading or trailing spaces, which are loaded as-is.
+    maxLength: 255
+
+  - name: quantity
+    sourceHeader: Quantity
+    type: integer
+    required: true
+    min: -100000
+    max: 100000
+    # A zero-quantity line has no meaning. The real dataset contains none, so this rule excludes
+    # nothing legitimate; observed range is [-80995, 80995].
+    notEqualTo: 0
+
+  - name: invoice_date
+    sourceHeader: InvoiceDate
+    type: datetime
+    required: true
+    format: "yyyy-MM-dd HH:mm:ss"
+    min: "2009-01-01 00:00:00"
+    # Evaluated against the injected Clock, so tests are deterministic (AC-06.7). The real dataset
+    # spans 2009-12-01 to 2011-12-09, entirely inside the window.
+    max: now
+
+  - name: unit_price
+    sourceHeader: Price
+    type: decimal
+    required: true
+    # Exactly two decimals of scale, dot separator, no currency symbol. A value with more decimals
+    # is INVALID_FORMAT and is never rounded (docs/02 section 2): 18 real rows fall here.
+    scale: 2
+    decimalSeparator: "."
+    min: 0
+    max: 100000
+
+  - name: customer_id
+    sourceHeader: Customer ID
+    type: string
+    required: false
+    # 22.77% of real rows have no customer. Of those that do, zero fail this pattern - which is
+    # also what proves the xlsx-to-CSV conversion renders the id as "13085" and not "13085.0".
+    pattern: "^\\d{5}$"
+
+  - name: country
+    sourceHeader: Country
+    type: enum
+    required: true
+    # Exact value from the catalogue. The catalogue is the dataset's own distinct values minus the
+    # exclusions justified in docs/perfilado-dataset.md, which is why it contains EIRE, RSA and USA
+    # rather than Ireland, South Africa and United States.
+    catalogue: countries.v1.txt
+    caseSensitive: true
+
+# Cross-field rules, evaluated only when every field involved is valid at field level (AC-06.3).
+# Each violation is reported with field = "_record" (docs/02 section 3.1).
+businessRules:
+  - code: BR-01
+    description: "If invoice_no starts with C, quantity must be negative."
+    # 1 real row breaks this.
+  - code: BR-02
+    description: "If invoice_no does not start with C, quantity must be positive."
+    # 3,457 real rows break this: inventory adjustments carrying a negative quantity without the
+    # C prefix. They are genuine data, and they belong in quarantine rather than in the clean table.
+
+# Computed during transformation, never read from the source (docs/02 section 2).
+derived:
+  - name: is_cancellation
+    expression: 'invoice_no starts with "C"'
+  - name: line_total
+    # Exact with no rounding: quantity is an integer and unit_price has scale 2, so the product has
+    # scale 2. The DB mirrors this as a CHECK (docs/05 section 4).
+    expression: "quantity * unit_price"
+    scale: 2
