@@ -360,12 +360,12 @@ Salvo `TRIM`, todos los verificadores operan sobre `s = strip(original)` (defini
 
 ### FR-19 — Generador de datos sucios con *ground truth* (Must)
 
-- **AC-19.1** — Un script (`tools/dirty-data-generator`) toma un baseline limpio y, con semilla fija, inyecta defectos del catálogo de `10-datasets.md` en una proporción configurable (default 5 % de filas).
+- **AC-19.1** — Un script (`tools/dirty_data_generator`) toma un baseline limpio y, con semilla fija, inyecta defectos del catálogo de `10-datasets.md` en una proporción configurable (default 5 % de filas).
 - **AC-19.2** — Produce `*.dirty.csv` (y opcionalmente `.json`) y `*.labels.csv` con: `source_row_number`, `field`, `defect_type`, `clean_value`, `dirty_value`, `expected_error_code`, `expected_outcome` (`AUTO_CORRECTED|QUARANTINED`), `expected_operation` (formato exacto en `10` §3). <!-- rev: R-27 -->
 - **AC-19.3** — Con la misma semilla y parámetros, la salida es idéntica byte a byte (fijar también versiones de librerías, orden de iteración y finales de línea `\n`).
 - **AC-19.4** — Garantías del generador: <!-- rev: R-27 -->
   - a lo sumo **un defecto por campo** en cada fila (las combinaciones usan campos distintos);
-  - cada defecto se aplica solo a filas donde tiene sentido (p. ej., `DATE_DMY_UNAMBIGUOUS` solo si el día > 12; `DATE_AMBIGUOUS` solo si día ≤ 12 **y** día ≠ mes; `FLOAT_ID` y `NULL_TOKEN_OPTIONAL` solo si `customer_id` no es nulo; `COUNTRY_SYNONYM` solo con pares presentes en `country-aliases.v1.yaml`);
+  - cada defecto se aplica solo a filas donde tiene sentido (p. ej., `DATE_DMY_UNAMBIGUOUS` solo si el día > 12; `DATE_AMBIGUOUS` solo si día ≤ 12 **y** día ≠ mes; `DATE_ISO_T` solo si día > 12 **o** día = mes (si no, el patrón con día/mes intercambiados también parsea y el verificador de `PARSE_DATE` lo rechaza con `AMBIGUOUS_DATE`); `FLOAT_ID` solo si `customer_id` no es nulo; `NULL_TOKEN_OPTIONAL` solo si `customer_id` es nulo (así `clean_value` es la cadena vacía y coincide con la corrección `null`, AC-20.3); `COUNTRY_SYNONYM` solo con pares presentes en `country-aliases.v1.yaml`);
   - los espacios inyectados son solo U+0020 y tab (§2);
   - un test de integración en `pipeline-service` ejecuta el validador sobre cada fila etiquetada y verifica que produce el `expected_error_code` (así se detecta si un defecto inyectado accidentalmente produce un valor válido o un código distinto).
 

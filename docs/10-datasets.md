@@ -51,13 +51,13 @@ La combinación evita la crítica habitual a los proyectos de demo ("solo funcio
 | `WHITESPACE` | `stock_code`, `invoice_no`, `country` | `85123A` → `"  85123A "` (solo U+0020/tab) | `PATTERN_MISMATCH` / `INVALID_ENUM_VALUE` | `AUTO_CORRECTED` | `TRIM` |
 | `CASE` | `country` | `United Kingdom` → `united kingdom` | `INVALID_ENUM_VALUE` | `AUTO_CORRECTED` | `NORMALIZE_CASE` |
 | `DATE_DMY_UNAMBIGUOUS` | `invoice_date` | `2010-12-25 08:26:00` → `25/12/2010 08:26` (día > 12) | `INVALID_FORMAT` | `AUTO_CORRECTED` | `PARSE_DATE` |
-| `DATE_ISO_T` | `invoice_date` | → `2010-12-01T08:26:00` | `INVALID_FORMAT` | `AUTO_CORRECTED` | `PARSE_DATE` |
+| `DATE_ISO_T` | `invoice_date` | `2010-12-25 08:26:00` → `2010-12-25T08:26:00` (día > 12 o día = mes; con otro día también parsea `yyyy-dd-MM` y sería `AMBIGUOUS_DATE`) | `INVALID_FORMAT` | `AUTO_CORRECTED` | `PARSE_DATE` |
 | `DATE_AMBIGUOUS` | `invoice_date` | `2010-04-03 09:15:00` → `03/04/2010 09:15` (día y mes ≤ 12 **y día ≠ mes**; con día = mes la fecha no es ambigua) | `INVALID_FORMAT` | `QUARANTINED` | — |
 | `DECIMAL_COMMA` | `unit_price` | `2.55` → `2,55` | `INVALID_FORMAT` | `AUTO_CORRECTED` | `PARSE_NUMBER` |
 | `CURRENCY_SYMBOL` | `unit_price` | `2.55` → `£2.55` (solo `£`; `$`/`€` implicarían conversión de moneda y no son corregibles, `02` §4) | `INVALID_FORMAT` | `AUTO_CORRECTED` | `PARSE_NUMBER` |
 | `FLOAT_ID` | `customer_id` | `17850` → `17850.0` | `PATTERN_MISMATCH` | `AUTO_CORRECTED` | `PARSE_NUMBER` |
 | `COUNTRY_SYNONYM` | `country` | `United Kingdom` → `UK`; `Germany` → `Deutschland`; `EIRE` → `Ireland` (solo pares presentes en `country-aliases.v1.yaml`) | `INVALID_ENUM_VALUE` | `AUTO_CORRECTED` | `MAP_TO_ENUM` |
-| `NULL_TOKEN_OPTIONAL` | `customer_id` | `17850` → `N/A` (y se espera `null`) | `PATTERN_MISMATCH` | `AUTO_CORRECTED` | `NULLIFY_TOKEN` |
+| `NULL_TOKEN_OPTIONAL` | `customer_id` | `""` → `N/A` (solo filas sin cliente; se espera `null`, que coincide con `clean_value`) | `PATTERN_MISMATCH` | `AUTO_CORRECTED` | `NULLIFY_TOKEN` |
 | `NULL_TOKEN_REQUIRED` | `unit_price`, `quantity` | `2.55` → `N/A` | `MISSING_REQUIRED_FIELD` | `QUARANTINED` | — |
 | `MISSING_REQUIRED` | `unit_price`, `invoice_date`, `country` | → `""` | `MISSING_REQUIRED_FIELD` | `QUARANTINED` | — |
 | `NEGATIVE_PRICE` | `unit_price` | `2.55` → `-2.55` | `OUT_OF_RANGE` | `QUARANTINED` | — |
