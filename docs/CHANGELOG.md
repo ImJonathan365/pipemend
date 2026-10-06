@@ -181,29 +181,6 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     no divergen. | Reversible: sí.
   - D26: verificado contra el Dockerfile oficial de `docker-library/postgres`: en 18+ `PGDATA` es
     `/var/lib/postgresql/18/docker` y el `VOLUME` es `/var/lib/postgresql`. El volumen se monta ahí.
-- Archivos protegidos modificados: `docker-compose.yml` — creación inicial con los tres servicios de
-  `04` §10, sin añadir ninguno. Aprobación explícita del owner en la sesión.
-- Pendiente en el Sprint 1: (g) descarga y perfilado del dataset, (h) FR-19.
-
-## Sprint 1 — Docker Compose y corrección de configuración (2026-10-01)
-- Hecho: `docker-compose.yml` con los tres servicios de `04` §10, healthchecks y `depends_on` por
-  `service_healthy`; `cp .env.example .env && docker compose up --build` levanta el stack (NFR-01).
-- Corregido: `application.yml` tenía dos valores truncados al pegarlos. `spring.flyway.locations` decía
-  `classpath:db/migra`, y como `fail-on-missing-locations` es `false` por defecto, Flyway **no fallaba**:
-  habría ignorado en silencio la `V1` del Sprint 2. Y `management.endpoints.web.exposure.include` decía
-  `health,info,metr`, dejando `/actuator/metrics` sin exponer (NFR-09). Ninguna de las dos rompía la CI.
-- Decisiones:
-  - D24: el healthcheck de `pipeline-service` es `curl -fsS /actuator/health`, no el
-    `wget ... | grep -q UP` de `04` §10. La imagen trae `curl` (D7, que resolvió el "verificar en el
-    Sprint 1" de ese mismo comentario), y el `grep UP` daría verde falso ante
-    `{"status":"DOWN","components":{"db":{"status":"UP"}}}` porque Actuator mapea DOWN a HTTP 503.
-    | Reversible: sí.
-  - D25: compose pasa a `pipeline-service` todas las `AI_*`/`PIPELINE_*` de `04` §8, aunque varias no
-    las lea ningún código hasta los Sprints 2-4. No son stubs de código (prohibidos por `01` X-*), son
-    variables de entorno que ese documento prescribe; así la configuración documentada y el stack real
-    no divergen. | Reversible: sí.
-  - D26: verificado contra el Dockerfile oficial de `docker-library/postgres`: en 18+ `PGDATA` es
-    `/var/lib/postgresql/18/docker` y el `VOLUME` es `/var/lib/postgresql`. El volumen se monta ahí.
 - Archivos protegidos modificados (todos con aprobación explícita del owner en la sesión):
   - `docker-compose.yml` — creación inicial con los tres servicios de `04` §10, sin añadir ninguno.
   - `docs/04-arquitectura.md` §10 — el healthcheck de referencia pasa de `wget ... | grep -q UP` a
@@ -213,6 +190,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `docs/04-arquitectura.md` §1 — el diagrama decía `red: pipemend-net`, pero §10 no declara bloque
     `networks`, así que compose crea `pipemend_default`. Pasa a decir `proyecto: pipemend`, que es el
     `name:` real. Sin cambio de comportamiento.
+- Pendiente en el Sprint 1: (g) descarga y perfilado del dataset, (h) FR-19.
 
 ## Sprint 1 — Descarga y perfilado del dataset (2026-10-02)
 - Hecho: proyecto `tools/` con uv (`pyproject.toml` + `uv.lock`), `tools/download_dataset.py` con
@@ -249,7 +227,8 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 
 ## Sprint 1 — Congelado del schema v1 (2026-10-04)
 - Hecho: `countries.v1.txt` (41 valores), `country-aliases.v1.yaml` (118 alias en 40 países) y
-  `sales_transaction.v1.yaml`, en el orden obligatorio de `10` §2 paso 3 bis. A partir de aquí : cambiarlos exige un ADR Accepted.
+  `sales_transaction.v1.yaml`, en el orden obligatorio de `10` §2 paso 3 bis. A partir de aquí son
+  🔴: cambiarlos exige un ADR Accepted.
 - Verificado sobre las 1.067.371 filas reales: baseline limpio de **1.063.072 filas (99,60 %)**. Las
   4.299 restantes cuadran con el perfilado: 3.457 `BR-02`, 817 `INVALID_ENUM_VALUE`
   (= 756 `Unspecified` + 61 `European Community`), 18 precios con 3 decimales, 5 precios negativos,
@@ -257,7 +236,6 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Decisiones:
   - D35: se excluyen del catálogo **solo** `Unspecified` (756 filas) y `European Community` (61). El
     criterio no es "¿es un estado soberano?" sino "¿identifica un destino?": esos dos no dicen dónde
-    fue la mercancía, mientras que `West Indies` (54) y `Channel Islands` (1.664) sí, aunque no seandónde
     fue la mercancía, mientras que `West Indies` (54) y `Channel Islands` (1.664) sí, aunque no sean
     estados. Excluirlos mandaría a cuarentena filas legítimas sin que un humano pueda resolverlas.
     | Reversible: no sin ADR | Aprobado por: owner.
@@ -277,7 +255,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     fallar al arrancar si hay colisión o si una clave no está en el catálogo.
 - Cabeceras confirmadas contra el archivo real y regex de `stock_code` cerrada: las dos tareas que
   `02` §2 dejaba abiertas para el Sprint 1 quedan resueltas.
-- Archivos protegidos: los tres de `schemas/` nacen aquí y pasan tras este sprint (`09` §2.1).
+- Archivos protegidos: los tres de `schemas/` nacen aquí y pasan a 🔴 tras este sprint (`09` §2.1).
 - Pendiente: las muestras del baseline (paso 4-6 de `10` §2) y luego (h) FR-19.
 
 ## Sprint 1 — Muestras del baseline (2026-10-04)
