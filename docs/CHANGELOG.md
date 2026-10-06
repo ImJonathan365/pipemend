@@ -279,3 +279,36 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - D43: `clean-10k` no se versiona: `10` §5 no lo incluye entre lo que va a git. | Reversible: sí.
 - Archivos protegidos modificados: `data/samples/**` (creación), con aprobación explícita del owner.
 - Pendiente: (h) FR-19.
+
+## Sprint 1 — Generador de datos sucios (2026-10-06)
+- Hecho: FR-19. `tools/dirty_data_generator` inyecta los 20 defectos de `10` §3 con semilla 42
+  (`--rate`, `--seed`, `--defects`); sin argumentos regenera `dirty-1k` (50 filas con defectos: 30
+  corregibles, 20 no) y `dirty-10k` (500), ambas con su `.labels.csv`. pytest en `tools/` (13 tests:
+  AC-19.1, AC-19.3 y AC-19.4 puntos 1-3) y nuevo job `tools` en la CI.
+- Decisiones del owner (P1-P6):
+  - `DATE_ISO_T` solo si día > 12 o día = mes: con otro día `yyyy-dd-MM` también parsea y el
+    verificador de `PARSE_DATE` lo rechazaría con `AMBIGUOUS_DATE`. AC-19.4 y `10` §3 actualizados.
+  - `NULL_TOKEN_OPTIONAL` solo en filas sin `customer_id`, para que la corrección `null` coincida con
+    `clean_value` (AC-20.3). AC-19.4 y `10` §3 actualizados.
+  - El test de integración de AC-19.4 (validador Java sobre cada fila etiquetada) se escribe en el
+    Sprint 2, junto con el validador.
+  - `dirty-1k.json` se genera en el Sprint 6, con FR-02.
+  - El directorio es `dirty_data_generator` (un paquete Python no admite guiones); AC-19.1 corregido.
+- Decisiones:
+  - D44: en los defectos combinados cada entrada lleva `defect_type` `COMBINED_FIXABLE` o
+    `COMBINED_MIXED`; en las filas que van a cuarentena `expected_operation` queda vacío. | Reversible: sí.
+  - D45: los tipos se reparten a partes iguales dentro de cada grupo, no al azar, para que `dirty-1k`
+    cubra los 20 tipos que el mock debe atender. | Reversible: sí.
+  - D46: `FUTURE_DATE` usa el año 2099 conservando mes, día y hora; con el 2031 del ejemplo, la muestra
+    se volvería válida en cinco años. | Reversible: sí.
+  - D47: `COMBINED_MIXED` nunca incluye `COLUMN_SHIFT` (una fila malformada no se evalúa más), y
+    `CANCEL_SIGN_MISMATCH` solo se combina si el defecto corregible no está en `invoice_no` ni en
+    `quantity`, porque si no BR-xx no se evalúa (AC-06.3). | Reversible: sí.
+  - D48: un test exige que `dirty-1k` versionado coincida byte a byte con el generador (`09` §2.3).
+    `dirty-10k` no puede comprobarse en la CI porque su entrada vive en `data/raw/`.
+- Archivos protegidos modificados (todos con aprobación explícita del owner en la sesión):
+  `data/samples/dirty-{1k,10k}.csv` y sus `.labels.csv` (creación); `.github/workflows/ci.yml` (job
+  nuevo, sin quitar pasos); `docs/02` AC-19.1 y AC-19.4; `docs/10` §3; `AGENTS.md` (`uv run pytest` en
+  los comandos de `tools/`). El PR supera las ~400 líneas fuera de tests de `09` §2.2 (unas 505, la
+  mitad es el catálogo declarativo); el owner aprobó mantenerlo en un solo PR.
+- Pendiente: Sprint 1 cerrado en código; queda el tag `v0.1`. Siguiente: Sprint 2.
