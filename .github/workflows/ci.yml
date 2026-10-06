@@ -84,3 +84,36 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  tools:
+    name: tools (Python 3.14)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: '0.12.19'
+          python-version: '3.14'
+          working-directory: tools
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Types (mypy)
+        run: uv run mypy .
+
+      # Includes the check that the committed dirty-1k files match the generator (docs/09 §2.3).
+      - name: Test
+        run: uv run pytest
