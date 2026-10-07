@@ -312,3 +312,25 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   los comandos de `tools/`). El PR supera las ~400 líneas fuera de tests de `09` §2.2 (unas 505, la
   mitad es el catálogo declarativo); el owner aprobó mantenerlo en un solo PR.
 - Pendiente: Sprint 1 cerrado en código; queda el tag `v0.1`. Siguiente: Sprint 2.
+
+## Sprint 2 — Validador (2026-10-06)
+- Hecho: FR-06. `schema/` carga `sales_transaction.v1.yaml` y `countries.v1.txt` en records (un
+  `FieldRule` sellado por tipo) y falla al arrancar ante cualquier clave, tipo o valor que no aplique
+  (AC-06.5). `validation/` es Java puro: `Validator` con las reglas de emisión de `02` §3.1, `Clock`
+  inyectado (AC-06.7) y `expected` con las claves de `06` A.1. 68 tests en verde.
+- Verificación cruzada: el validador acepta las 1.000 filas de `clean-1k` (lado Java de D40) y da en
+  `dirty-1k` exactamente los códigos etiquetados en las 48 filas que no son `MALFORMED_ROW`. Las 2 de
+  `COLUMN_SHIFT` las cubre el test de AC-19.4 con el lector real, en la rama del job.
+- Decisiones:
+  - D49: SnakeYAML (la 2.6 que gestiona Boot 4.1.1) declarado explícitamente, en lugar de depender de
+    la transitiva; Jackson YAML habría sido una dependencia nueva. | Reversible: sí.
+  - D50: `INVALID_FORMAT` frente a `INVALID_TYPE` en números se decide por la forma del número (dígitos
+    con un separador decimal, o grupos de tres con un separador distinto del decimal), con signo y,
+    solo en `unit_price`, un símbolo `£ $ €`. Es la única lectura que cumple a la vez el texto de
+    `02` §3.1 y sus ejemplos (`"2.5.5"` → `INVALID_TYPE` aunque solo tiene dígitos y puntos).
+    | Reversible: sí | Pendiente de confirmación del owner.
+  - D51: el validador acepta enteros con ceros a la izquierda (`"06"`) y rechaza `"+6"`
+    (`INVALID_FORMAT`). El filtro de Python (D40) es más estricto a propósito. | Reversible: sí.
+  - D52: las violaciones `BR-xx` llevan `receivedValue = null`, `expected = {"rule": "BR-0n"}` y los
+    valores en `technicalMessage`; nunca se cachean (AC-08.4b). | Reversible: sí.
+- Archivos protegidos modificados: ninguno.
