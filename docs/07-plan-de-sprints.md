@@ -66,7 +66,7 @@ Camino crítico: **1 → 2 → 3 → 4**. Al terminar el Sprint 4 existe el **n�
 
 | Tarea | h |
 |---|---|
-| Migraciones Flyway: `V1` metadata de Spring Batch (script del jar), `ingestion_batch`, `sales_transaction` **y `quarantine_record`** (adelantada desde el Sprint 3) | 1.5 |
+| Migraciones Flyway: `V1` metadata de Spring Batch (script del jar), `ingestion_batch`, `sales_transaction` **y `quarantine_record`** (adelantada desde el Sprint 3). `V2__core_tables.sql` incluye además `ai_call_log` y `correction_log`, adelantadas desde los Sprints 3 y 4 (decisión del owner, 2026-10-07) | 1.5 |
 | `POST /api/v1/ingestions`: validación de archivo, checksum, almacenamiento en inbox, `409` por duplicado | 2 |
 | Job: `intakeStep` (con conteo de registros), `processRecordsStep` (reader CSV tolerante y reiniciable, processor, writer JDBC), `finalizeStep` con invariante completo, lanzamiento asíncrono con `JobOperator` y ejecutor de un hilo | 3.5 |
 | Carga del schema YAML + `Validator` puro con tests unitarios (FR-06 + reglas de `02` §3.1) | 3 |
@@ -89,7 +89,7 @@ Camino crítico: **1 → 2 → 3 → 4**. Al terminar el Sprint 4 existe el **n�
 | Modelos Pydantic del contrato (`TriageRequest/Response`) + export de OpenAPI a `contracts/` + fixtures | 1.5 |
 | `LLMProvider` protocol, factory, `MockProvider` cubriendo todo el catálogo de defectos | 2 |
 | `triage_service` con reglas duras (`rules.py`) y caché | 1.5 |
-| Migración `ai_call_log` (`quarantine_record` ya existe desde el Sprint 2) | 0.25 |
+| ~~Migración `ai_call_log`~~ adelantada a `V2` en el Sprint 2 (`quarantine_record` también existe desde el Sprint 2) | 0.25 |
 | Pipeline: construcción de contexto (FR-07), `HttpAiTriageClient` (reemplaza a `DisabledAiTriagePort`; sin resiliencia aún) + `TriageResponseValidator` (AC-08.7) | 2.5 |
 | Writer clasificador: limpio vs cuarentena (todos los inválidos → cuarentena con `AI_REVIEW_REQUIRED` o el motivo que corresponda) | 1 |
 | Tests: contrato con fixtures en ambos lados; integración con WireMock | 1 |
@@ -105,7 +105,7 @@ Camino crítico: **1 → 2 → 3 → 4**. Al terminar el Sprint 4 existe el **n�
 | `CorrectionPolicy` + tests parametrizados (todos los motivos de rechazo) | 2 |
 | Verificadores por operación (`TRIM`, `NORMALIZE_CASE`, `PARSE_DATE` con detección de ambigüedad, `PARSE_NUMBER` con ambigüedad de miles y moneda, `MAP_TO_ENUM` contra `country-aliases.v1.yaml`, `NULLIFY_TOKEN`) + tests | 3.5 |
 | Suite adversarial (AC-10.6) | 1.5 |
-| `CorrectionApplier` + revalidación + `correction_log` (migración + writer) en la misma transacción | 2 |
+| `CorrectionApplier` + revalidación + `correction_log` (writer; la migración se adelantó a `V2` en el Sprint 2) en la misma transacción | 2 |
 | Resilience4j (timeouts, retry solo de transporte, circuit breaker con llamadas lentas) + mapeo de fallas a motivos de cuarentena + validación del invariante de timeouts (NFR-07) | 2 |
 | `AiBudget` por lote (AC-08.6) | 0.5 |
 | Tests de integración: IA caída, **IA colgada** (AC-12.5), respuesta inválida, presupuesto agotado; invariante; **AC-20.3** (resultado exacto vs *ground truth*) | 2 |

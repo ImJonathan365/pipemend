@@ -328,9 +328,54 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     con un separador decimal, o grupos de tres con un separador distinto del decimal), con signo y,
     solo en `unit_price`, un símbolo `£ $ €`. Es la única lectura que cumple a la vez el texto de
     `02` §3.1 y sus ejemplos (`"2.5.5"` → `INVALID_TYPE` aunque solo tiene dígitos y puntos).
-    | Reversible: sí | Pendiente de confirmación del owner.
+    | Reversible: sí | Aprobado por: owner (2026-10-07).
   - D51: el validador acepta enteros con ceros a la izquierda (`"06"`) y rechaza `"+6"`
     (`INVALID_FORMAT`). El filtro de Python (D40) es más estricto a propósito. | Reversible: sí.
   - D52: las violaciones `BR-xx` llevan `receivedValue = null`, `expected = {"rule": "BR-0n"}` y los
     valores en `technicalMessage`; nunca se cachean (AC-08.4b). | Reversible: sí.
 - Archivos protegidos modificados: ninguno.
+
+## Sprint 2 — Migraciones de base de datos (2026-10-19)
+- Hecho: FR-13 (parte de base de datos). `spring-boot-starter-batch-jdbc` en el build;
+  `V1__spring_batch_schema.sql`, copia byte a byte de `org/springframework/batch/core/schema-postgresql.sql`
+  de `spring-batch-core-6.0.5.jar` (comprobada con `cmp` contra el jar de Maven Central, con el SHA-1
+  verificado); `V2__core_tables.sql`, idéntico al DDL de `05` §4; `spring.batch.jdbc.initialize-schema=never`.
+  Test con Testcontainers (`postgres:18-alpine`): Flyway aplica `V1` y `V2`, existen las tablas y
+  secuencias `BATCH_*` y las cinco tablas, y cada `CHECK` de `sales_transaction` que replica el schema
+  falla en la BD (SQLState `23514`, con el nombre del constraint) y en el validador con el código
+  esperado (AC-13.4, `05` §1). Los límites inclusivos se aceptan en ambos lados.
+- Decisiones del owner (2026-10-07):
+  - "V2 con las cinco tablas": `V2__core_tables.sql` crea `ingestion_batch`, `sales_transaction`,
+    `quarantine_record`, `correction_log` y `ai_call_log`. Quedan adelantadas la tarea "Migración
+    `ai_call_log`" del Sprint 3 y la migración de "`correction_log` (migración + writer)" del Sprint 4.
+  - "apruebo añadir dev en ci.yml": la CI también se ejecuta en los push a `dev`.
+  - "D50 confirmado": D50 pasa a aprobada.
+  - "sí, modifica docs/07 para marcar como adelantadas a V2 las migraciones de ai_call_log y
+    correction_log": `07` lo refleja en las tareas de los Sprints 2, 3 y 4.
+- Decisiones:
+  - D53: el test-starter es `spring-boot-starter-batch-jdbc-test` (verificado en Maven Central), pero
+    entra en la rama del job, cuando haya un job que lo use. | Reversible: sí | Aprobado por: owner.
+  - D54: cada caso del test identifica el `CHECK` por su nombre, no solo por el SQLState, para que no
+    pase por un `NOT NULL` u otro constraint. Los `CHECK` de columna llevan el nombre automático de
+    PostgreSQL (`sales_transaction_<columna>_check`); solo los `ck_sales_*` tienen nombre explícito.
+    | Reversible: sí.
+  - D55: el test de humo pasa a Testcontainers. El repositorio JDBC de Spring Batch lee el tipo de base
+    de datos de una conexión real al arrancar el contexto, así que el truco de D8 (datasource a un host
+    inexistente) deja de funcionar. Comparte configuración con el test de migraciones: un solo
+    contexto y un solo contenedor. | Reversible: sí.
+  - D56: los `CHECK` sobre columnas que calcula el pipeline (`source_row_number`, `load_origin`,
+    `ck_sales_cancellation`, `ck_sales_line_total`) solo se prueban en la BD: el validador no tiene
+    contraparte porque no son datos de entrada. | Reversible: sí.
+- Cubierto también: la parte de base de datos de AC-04.3b (ADR-0009). Dos lotes activos no pueden
+  compartir checksum; los `REJECTED` no lo bloquean. El `409` llega con FR-01.
+- El build usa Spotless 8.10.3 (parche posterior a lo registrado en el Sprint 1).
+- Archivos protegidos modificados (con aprobación explícita del owner): `.github/workflows/ci.yml`
+  (`on.push.branches` pasa de `[main]` a `[main, dev]`; ningún paso quitado), `docs/07` (tareas de
+  migración marcadas como adelantadas).
+- Pendiente para la rama del job (`feat/FR-13-ingestion-job`):
+  - Test que demuestre que un precio con 3 decimales no llega a la BD. `numeric(12,2)` redondea en
+    silencio y un `CHECK` no lo detectaría, porque PostgreSQL convierte el valor antes de evaluarlo.
+    La defensa es el validador más `setScale(2, RoundingMode.UNNECESSARY)` en el transformador: la
+    `ArithmeticException` termina en `PROCESSING_ERROR`, nunca en un redondeo.
+  - Test que compruebe filas en `BATCH_JOB_EXECUTION` tras un job (`04` §3.1), con
+    `spring-boot-starter-batch-jdbc-test` (D53).
