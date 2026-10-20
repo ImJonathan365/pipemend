@@ -3,7 +3,7 @@ name: CI
 # Steps are never removed from this file and thresholds are never lowered.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 # Least privilege: this workflow only needs to read the repository (NFR-14).
