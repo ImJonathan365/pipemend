@@ -471,3 +471,23 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Test de que un conflicto real en el `UNIQUE` de la BD termina en `FAILED INVARIANT_VIOLATION`, sin
     manipular contadores.
   - Test de reinicio (AC-04.4), adelantado desde el Sprint 7.
+
+## Sprint 2 — Comillas sueltas en el lector CSV (2026-10-21)
+- Corregido: FR-01 (AC-01.5). Una comilla suelta dentro de un campo sin comillas (`5" TILE`) abría
+  una sección entre comillas que solo cerraba la siguiente comilla del archivo. Con dos comillas
+  sueltas en filas distintas, las filas intermedias se fundían en un único registro válido y se
+  perdían sin error, y el invariante de NFR-06 no lo detectaba.
+- Decisión del owner (2026-10-21): "Apruebo que una comilla en medio de un campo sin comillas convierta
+  esa línea en MALFORMED_ROW, en una rama fix/FR-01-stray-quote antes de 3c."
+- Decisiones:
+  - D68: el lector sigue RFC 4180 estricto. Una comilla solo abre un campo entre comillas si es su
+    primer carácter, y tras la comilla de cierre solo puede venir una coma o el fin del registro.
+    Cualquier otra comilla convierte esa línea física en `RawRecord.Malformed` con la línea original,
+    y nunca la une con otras. La separación en columnas y el fin de registro salen del mismo método, así
+    que aplican la misma regla. Sustituye al `DelimitedLineTokenizer` de D57; `FlatFileItemReader`
+    sigue a cargo del reinicio y del conteo. Consecuencia: un espacio antes de una comilla de apertura
+    (`a, "b"`) también es una comilla suelta. D61 no cambia: una comilla de apertura que nunca se
+    cierra sigue rechazando el lote. `RawRecord.Malformed` pasa a llevar el motivo en texto, que llega
+    tal cual a `technicalMessage` (D63). | Alternativas: mantener `DelimitedLineTokenizer` y validar
+    las comillas aparte, con dos reglas que podrían divergir | Reversible: sí.
+- Archivos protegidos modificados: ninguno.
