@@ -19,6 +19,8 @@ import org.springframework.core.io.FileSystemResource;
 
 class RawRecordReaderTest {
 
+    private static final String STRAY_QUOTE = "A quote appears inside a field that does not start with one";
+
     @TempDir
     Path dir;
 
@@ -42,14 +44,16 @@ class RawRecordReaderTest {
 
         assertThat(records)
                 .containsExactly(
-                        new RawRecord.Malformed(1, "1,2,3,4", 3, 4),
-                        new RawRecord.Malformed(2, "5,6", 3, 2),
+                        new RawRecord.Malformed(1, "1,2,3,4", "Expected 3 columns, found 4"),
+                        new RawRecord.Malformed(2, "5,6", "Expected 3 columns, found 2"),
                         new RawRecord.Parsed(3, Map.of("a", "7", "b", "8", "c", "9")));
     }
 
     @Test
     void ac_01_5_anEmptyLineIsAMalformedRecord() throws Exception {
-        assertThat(readAll("a,b\n1,2\n\n3,4\n")).element(1).isEqualTo(new RawRecord.Malformed(2, "", 2, 0));
+        assertThat(readAll("a,b\n1,2\n\n3,4\n"))
+                .element(1)
+                .isEqualTo(new RawRecord.Malformed(2, "", "Expected 2 columns, found 0"));
     }
 
     @Test
@@ -135,23 +139,50 @@ class RawRecordReaderTest {
         assertThatThrownBy(reader::read).isInstanceOf(InvalidFileFormatException.class);
     }
 
-    // Pins current behaviour, not desired behaviour: a stray quote inside an unquoted field opens a quoted section
-    // that only the next quote closes, wherever it is.
     @Test
-    void aSingleStrayQuoteInAnUnquotedFieldRejectsTheFile() throws Exception {
-        RawRecordReader reader = open(bytes("a,b\n1,5\" TILE\n2,x\n3,y\n"));
-
-        assertThatThrownBy(reader::read).isInstanceOf(InvalidFileFormatException.class);
-    }
-
-    @Test
-    void twoStrayQuotesSwallowTheRowsBetweenThemIntoOneParsedRecord() throws Exception {
+    void ac_01_5_aStrayQuoteMakesOnlyItsOwnLineMalformedAndTheRowsBetweenStayIntact() throws Exception {
         List<RawRecord> records = readAll("a,b\n1,5\" TILE\n2,x\n3,8\" PLATE\n4,z\n");
 
         assertThat(records)
                 .containsExactly(
-                        new RawRecord.Parsed(1, Map.of("a", "1", "b", "5\" TILE\n2,x\n3,8\" PLATE")),
-                        new RawRecord.Parsed(2, Map.of("a", "4", "b", "z")));
+                        new RawRecord.Malformed(1, "1,5\" TILE", STRAY_QUOTE),
+                        new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")),
+                        new RawRecord.Malformed(3, "3,8\" PLATE", STRAY_QUOTE),
+                        new RawRecord.Parsed(4, Map.of("a", "4", "b", "z")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1,\"5\" TILE\"", "1, \"5 TILE\"", "1,5 TILE\""})
+    void ac_01_5_aQuoteThatDoesNotOpenOrCloseAFieldIsAStrayQuote(String line) throws Exception {
+        assertThat(readAll("a,b\n" + line + "\n2,x\n"))
+                .containsExactly(
+                        new RawRecord.Malformed(1, line, STRAY_QUOTE),
+                        new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")));
+    }
+
+    @Test
+    void aStrayQuoteNeverOpensAMultilineRecord() throws Exception {
+        assertThat(readAll("a,b\n1,5\" TILE,\"open\n2,x\n"))
+                .containsExactly(
+                        new RawRecord.Malformed(1, "1,5\" TILE,\"open", STRAY_QUOTE),
+                        new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")));
+    }
+
+    @Test
+    void aProperlyEscapedQuoteInAQuotedFieldIsParsed() throws Exception {
+        assertThat(readAll("a,b\n1,\"5\"\" TILE\"\n"))
+                .containsExactly(new RawRecord.Parsed(1, Map.of("a", "1", "b", "5\" TILE")));
+    }
+
+    @Test
+    void anEmptyQuotedFieldAndATrailingEmptyFieldAreParsed() throws Exception {
+        assertThat(readAll("a,b,c\n\"\",x,\n"))
+                .containsExactly(new RawRecord.Parsed(1, Map.of("a", "", "b", "x", "c", "")));
+    }
+
+    @Test
+    void aHeaderWithAStrayQuoteIsAnInvalidFileFormat() {
+        assertThatThrownBy(() -> open(bytes("a,b\"\n1,2\n"))).isInstanceOf(InvalidFileFormatException.class);
     }
 
     @Test
