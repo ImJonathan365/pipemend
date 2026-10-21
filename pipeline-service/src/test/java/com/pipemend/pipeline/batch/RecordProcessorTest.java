@@ -73,7 +73,8 @@ class RecordProcessorTest {
 
     @Test
     void ac_01_5_aMalformedRowIsQuarantinedWithItsRawLine() {
-        ProcessedRecord result = processor.process(new RawRecord.Malformed(9, "a,b,c,d,e,f,g,h,i", 8, 9));
+        ProcessedRecord result =
+                processor.process(new RawRecord.Malformed(9, "a,b,c,d,e,f,g,h,i", "Expected 8 columns, found 9"));
 
         assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
             assertThat(q.reason()).isEqualTo(QuarantineReason.AI_UNAVAILABLE);

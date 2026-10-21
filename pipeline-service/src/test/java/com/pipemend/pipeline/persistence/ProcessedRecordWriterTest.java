@@ -129,7 +129,7 @@ class ProcessedRecordWriterTest {
 
     @Test
     void ac_11_2_aMalformedRowKeepsItsRawLineAndATechnicalSummary() throws Exception {
-        write(process(schema, new RawRecord.Malformed(3, "1,2,3", 8, 3)));
+        write(process(schema, new RawRecord.Malformed(3, "1,2,3", "Expected 8 columns, found 3")));
 
         Map<String, Object> row = jdbc.sql(
                         "SELECT raw_payload::text AS raw, summary FROM quarantine_record WHERE batch_id = :id")
@@ -149,7 +149,7 @@ class ProcessedRecordWriterTest {
         write(
                 process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow())),
                 process(schema, new RawRecord.Parsed(2, invalid)),
-                process(schema, new RawRecord.Malformed(3, "x", 8, 1)));
+                process(schema, new RawRecord.Malformed(3, "x", "Expected 8 columns, found 1")));
 
         assertThat(rowNumbers("sales_transaction")).containsExactly(1);
         assertThat(rowNumbers("quarantine_record")).containsExactly(2, 3);

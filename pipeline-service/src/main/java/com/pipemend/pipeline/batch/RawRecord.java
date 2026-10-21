@@ -10,7 +10,8 @@ public sealed interface RawRecord {
     /** @param valuesByHeader raw values keyed by header, in file order */
     record Parsed(int sourceRowNumber, Map<String, String> valuesByHeader) implements RawRecord {}
 
-    /** A record whose column count differs from the header's (AC-01.5); kept verbatim, never padded or cut. */
-    record Malformed(int sourceRowNumber, String rawLine, int expectedColumns, int actualColumns)
-            implements RawRecord {}
+    /**
+     * A record with the wrong column count or a stray quote (AC-01.5); kept verbatim, never padded, cut or joined.
+     */
+    record Malformed(int sourceRowNumber, String rawLine, String reason) implements RawRecord {}
 }
