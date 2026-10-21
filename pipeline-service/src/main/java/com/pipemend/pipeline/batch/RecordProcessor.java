@@ -98,14 +98,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     }
 
     private static Violation malformedRow(RawRecord.Malformed record) {
-        return new Violation(
-                Validator.RECORD,
-                null,
-                ErrorCode.MALFORMED_ROW,
-                null,
-                Map.of(),
-                "Expected " + record.expectedColumns() + " columns, found " + record.actualColumns(),
-                null);
+        return new Violation(Validator.RECORD, null, ErrorCode.MALFORMED_ROW, null, Map.of(), record.reason(), null);
     }
 
     /** The technical summary of AC-11.2, written by the pipeline without AI. */
