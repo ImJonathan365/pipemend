@@ -390,3 +390,32 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - ⚠ en 05/10 y ⭐ en 07 fuera de la regla de emojis; limpieza en un PR docs/ aparte con aprobación.
   - Si el agente puede usar git para leer (`status`, `diff`, `log`): la fila "Git" solo dice que el
     owner ejecuta los comandos que modifican el repo, a la espera de su decisión.
+
+## Sprint 2 — Lector CSV (2026-10-21)
+- Hecho: FR-01 (lectura). `batch/RawRecordReader` lee CSV UTF-8 con cabecera y comillas RFC 4180 y
+  devuelve `RawRecord.Parsed` o `RawRecord.Malformed`; nunca lanza por el contenido de un registro
+  (AC-01.5). Quita el BOM, acepta `\n` y `\r\n` y numera registros lógicos (AC-01.7). Una cabecera vacía
+  o repetida, un archivo sin cabecera o un UTF-8 inválido lanzan `InvalidFileFormatException`, que la
+  rama del job traducirá a `REJECTED` con `INVALID_FILE_FORMAT` (AC-01.8). Es reiniciable: la posición
+  vive en el `ExecutionContext` (la parte de NFR-04 que corresponde al lector).
+- AC-19.4 completo: `SampleValidationTest` lee `dirty-1k` con el lector real y comprueba las 50 filas
+  etiquetadas, incluidas las 2 de `COLUMN_SHIFT` (`MALFORMED_ROW`), que antes se saltaba.
+- Decisión del owner (2026-10-21): "Apruebo partir la rama 3 en 3a, 3b y 3c; que 3b toque FR-13, FR-11
+  y FR-12 (DisabledAiTriagePort) y que 3c toque FR-13, FR-05 (solo el rechazo por identidad), NFR-04 y
+  NFR-06."
+- Decisiones:
+  - D57: el lector delega en `FlatFileItemReader` (reinicio y conteo de registros) y separa columnas con
+    `DelimitedLineTokenizer` en modo estricto, con los nombres de la cabecera; un número de columnas
+    distinto llega como `IncorrectTokenCountException` y se convierte en `Malformed`. Sin dependencias
+    nuevas. | Alternativas: un parser propio; Commons CSV | Reversible: sí.
+  - D58: se desactivan dos comportamientos por defecto de Batch 6.0.5 que alteran datos en silencio:
+    las líneas que empiezan por `#` se descartaban como comentarios, y una línea terminada en `\` se
+    unía con la siguiente. | Reversible: sí.
+  - D59: un salto de línea dentro de un campo entre comillas llega como `\n`, también si el archivo usa
+    `\r\n`. | Reversible: sí.
+  - D60: una línea vacía es un registro `MALFORMED_ROW` con 0 columnas, no se ignora; el conteo de
+    NFR-06 la cuenta igual porque usa el mismo lector. | Reversible: sí.
+  - D61: una comilla sin cerrar hace que el archivo no se pueda partir en registros, así que lanza
+    `InvalidFileFormatException` (lote `REJECTED`, ninguna fila cargada) en lugar de `MALFORMED_ROW`.
+    | Alternativas: un `MALFORMED_ROW` con todo el resto del archivo | Reversible: sí | Pendiente de
+    confirmación del owner.
