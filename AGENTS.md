@@ -53,6 +53,19 @@ Workflow: one FR per PR, reference FR/NFR/AC IDs, Conventional Commits, tests fo
 update /docs in the same PR, "Decisions" section in the PR (docs/09 §5.1). No push to main, no force push, no tags, no self-merge.
 End every task with the report format in docs/09 §9.
 
+Conventions (docs/09 §6):
+- Language: code, identifiers, comments, commits, PRs and root README in English; /docs in Spanish; replies to the owner
+  in Spanish. AI_EXPLANATION_LANGUAGE is the runtime language of LLM explanations, not the agent's.
+- Comments: sparse; only a non-obvious *why* (version trap, /docs rule, non-obvious decision). Never narrate the code.
+- Emojis: none in code, comments, commits or messages. Only exception: the 🔴/🟠/🟢 markers of docs/09 §2.1 when
+  classifying files, in /docs, in plans and in the PR's "Protected files modified" section.
+- Git: the owner runs the git commands that modify the repo; the agent hands them over ready to paste. Branches start
+  from `dev`, PRs target `dev`, the owner merges `dev` → `main`. No attribution lines or Co-Authored-By.
+- CI: after a push/merge to `dev` the owner reports, or on a failure, check CI with read-only `gh` (`run list`,
+  `run view --log-failed`, `pr checks`). Never a `gh` command that writes to GitHub unless the owner asks. Fix in a
+  `fix/...` branch from `dev` after running the job's command locally; never by removing steps, continue-on-error
+  or lowering thresholds.
+
 Commands:
 - Run all: `cp .env.example .env && docker compose up --build`
 - Pipeline tests: `cd pipeline-service && ./gradlew test`   # Gradle Kotlin DSL, Java 25 toolchain (ADR-0006)
