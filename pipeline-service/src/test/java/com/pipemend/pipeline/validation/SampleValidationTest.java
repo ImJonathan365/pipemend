@@ -2,12 +2,11 @@ package com.pipemend.pipeline.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.pipemend.pipeline.batch.RawRecord;
+import com.pipemend.pipeline.batch.RawRecordReader;
 import com.pipemend.pipeline.schema.FieldSpec;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,11 +17,13 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
+import org.springframework.core.io.FileSystemResource;
 
 /**
- * Runs the validator over the committed samples. clean-1k is the Java side of the D40 cross-check on the Python
- * baseline filter; dirty-1k checks every labelled row against its expected codes (AC-19.4). Rows labelled
- * MALFORMED_ROW are the reader's job, so they are covered with the reader in the ingestion job.
+ * Reads the committed samples with the real reader and validates every record. clean-1k is the Java side of the D40
+ * cross-check on the Python baseline filter; dirty-1k checks every labelled row against its expected codes (AC-19.4),
+ * MALFORMED_ROW included, which only the reader can produce.
  */
 class SampleValidationTest {
 
@@ -32,101 +33,61 @@ class SampleValidationTest {
     private final Validator validator = new Validator(schema, ValidatorTest.CLOCK);
 
     @Test
-    void everyCleanBaselineRowIsValid() throws IOException {
-        List<Map<String, String>> records = records("clean-1k.csv");
+    void everyCleanBaselineRowIsValid() throws Exception {
+        List<RawRecord> records = read("clean-1k.csv");
 
         assertThat(records).hasSize(1000);
-        for (int i = 0; i < records.size(); i++) {
-            assertThat(validator.validate(records.get(i))).as("row %d", i + 1).isEmpty();
+        for (RawRecord record : records) {
+            assertThat(codes(record)).as("row %d", record.sourceRowNumber()).isEmpty();
         }
     }
 
     @Test
-    void ac_19_4_everyLabelledRowProducesItsExpectedCodes() throws IOException {
-        List<Map<String, String>> records = records("dirty-1k.csv");
-        List<List<String>> labels = csv("dirty-1k.labels.csv");
+    void ac_19_4_everyLabelledRowProducesItsExpectedCodes() throws Exception {
+        List<RawRecord> records = read("dirty-1k.csv");
         Map<Integer, Set<String>> expected = new TreeMap<>();
-        for (List<String> label : labels.subList(1, labels.size())) {
-            expected.computeIfAbsent(Integer.valueOf(label.get(0)), row -> new TreeSet<>())
-                    .add(label.get(2) + ":" + label.get(5));
+        for (RawRecord label : read("dirty-1k.labels.csv")) {
+            Map<String, String> columns = ((RawRecord.Parsed) label).valuesByHeader();
+            expected.computeIfAbsent(Integer.valueOf(columns.get("source_row_number")), row -> new TreeSet<>())
+                    .add(columns.get("field") + ":" + columns.get("expected_error_code"));
         }
-        long malformed = expected.values().stream()
-                .filter(codes -> codes.contains("_record:MALFORMED_ROW"))
-                .count();
 
-        int checked = 0;
-        for (int i = 0; i < records.size(); i++) {
-            Set<String> labelled = expected.getOrDefault(i + 1, Set.of());
-            if (labelled.contains("_record:MALFORMED_ROW")) {
-                continue;
-            }
-            Set<String> actual = validator.validate(records.get(i)).stream()
-                    .map(v -> v.field() + ":" + v.errorCode())
-                    .collect(Collectors.toCollection(TreeSet::new));
-            assertThat(actual).as("row %d", i + 1).isEqualTo(labelled);
-            checked++;
+        assertThat(records).hasSize(1000);
+        for (RawRecord record : records) {
+            assertThat(codes(record))
+                    .as("row %d", record.sourceRowNumber())
+                    .isEqualTo(expected.getOrDefault(record.sourceRowNumber(), Set.of()));
         }
         assertThat(expected).hasSize(50);
-        assertThat(checked).isEqualTo(1000 - malformed);
+        assertThat(records).filteredOn(RawRecord.Malformed.class::isInstance).hasSize(2);
     }
 
-    private List<Map<String, String>> records(String file) throws IOException {
-        List<List<String>> rows = csv(file);
-        List<String> headers = rows.getFirst();
-        Map<String, String> fieldByHeader = new HashMap<>();
+    private Set<String> codes(RawRecord record) {
+        return switch (record) {
+            case RawRecord.Malformed malformed -> Set.of(Validator.RECORD + ":" + ErrorCode.MALFORMED_ROW);
+            case RawRecord.Parsed parsed ->
+                validator.validate(toFields(parsed)).stream()
+                        .map(v -> v.field() + ":" + v.errorCode())
+                        .collect(Collectors.toCollection(TreeSet::new));
+        };
+    }
+
+    private Map<String, String> toFields(RawRecord.Parsed record) {
+        Map<String, String> fields = new HashMap<>();
         for (FieldSpec field : schema.fields()) {
-            fieldByHeader.put(field.sourceHeader(), field.name());
+            fields.put(field.name(), record.valuesByHeader().get(field.sourceHeader()));
         }
-        List<Map<String, String>> records = new ArrayList<>();
-        for (List<String> row : rows.subList(1, rows.size())) {
-            Map<String, String> record = new HashMap<>();
-            // A malformed row keeps its extra cells unmapped; the test skips it anyway.
-            for (int c = 0; c < headers.size(); c++) {
-                record.put(fieldByHeader.get(headers.get(c)), row.get(c));
-            }
+        return fields;
+    }
+
+    private static List<RawRecord> read(String file) throws Exception {
+        RawRecordReader reader = new RawRecordReader(new FileSystemResource(SAMPLES.resolve(file)));
+        reader.open(new ExecutionContext());
+        List<RawRecord> records = new ArrayList<>();
+        for (RawRecord record = reader.read(); record != null; record = reader.read()) {
             records.add(record);
         }
+        reader.close();
         return records;
-    }
-
-    private static List<List<String>> csv(String file) throws IOException {
-        return parse(Files.readString(SAMPLES.resolve(file), StandardCharsets.UTF_8));
-    }
-
-    /** Minimal RFC 4180 parser for the committed samples, which the generator writes with "\n" endings. */
-    static List<List<String>> parse(String text) {
-        List<List<String>> rows = new ArrayList<>();
-        List<String> row = new ArrayList<>();
-        StringBuilder cell = new StringBuilder();
-        boolean quoted = false;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (quoted) {
-                if (c != '"') {
-                    cell.append(c);
-                } else if (i + 1 < text.length() && text.charAt(i + 1) == '"') {
-                    cell.append('"');
-                    i++;
-                } else {
-                    quoted = false;
-                }
-            } else if (c == '"') {
-                quoted = true;
-            } else if (c == ',' || c == '\n') {
-                row.add(cell.toString());
-                cell.setLength(0);
-                if (c == '\n') {
-                    rows.add(row);
-                    row = new ArrayList<>();
-                }
-            } else {
-                cell.append(c);
-            }
-        }
-        if (!cell.isEmpty() || !row.isEmpty()) {
-            row.add(cell.toString());
-            rows.add(row);
-        }
-        return rows;
     }
 }
