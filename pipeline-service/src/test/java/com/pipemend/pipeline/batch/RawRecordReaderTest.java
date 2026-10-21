@@ -135,6 +135,25 @@ class RawRecordReaderTest {
         assertThatThrownBy(reader::read).isInstanceOf(InvalidFileFormatException.class);
     }
 
+    // Pins current behaviour, not desired behaviour: a stray quote inside an unquoted field opens a quoted section
+    // that only the next quote closes, wherever it is.
+    @Test
+    void aSingleStrayQuoteInAnUnquotedFieldRejectsTheFile() throws Exception {
+        RawRecordReader reader = open(bytes("a,b\n1,5\" TILE\n2,x\n3,y\n"));
+
+        assertThatThrownBy(reader::read).isInstanceOf(InvalidFileFormatException.class);
+    }
+
+    @Test
+    void twoStrayQuotesSwallowTheRowsBetweenThemIntoOneParsedRecord() throws Exception {
+        List<RawRecord> records = readAll("a,b\n1,5\" TILE\n2,x\n3,8\" PLATE\n4,z\n");
+
+        assertThat(records)
+                .containsExactly(
+                        new RawRecord.Parsed(1, Map.of("a", "1", "b", "5\" TILE\n2,x\n3,8\" PLATE")),
+                        new RawRecord.Parsed(2, Map.of("a", "4", "b", "z")));
+    }
+
     @Test
     void nfr_04_aReopenedReaderResumesAfterTheLastSavedRecord() throws Exception {
         byte[] file = bytes("a,b\n1,x\n2,\"multi\nline\"\n3,z\n4,w\n");

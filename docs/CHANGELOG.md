@@ -417,5 +417,57 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     NFR-06 la cuenta igual porque usa el mismo lector. | Reversible: sí.
   - D61: una comilla sin cerrar hace que el archivo no se pueda partir en registros, así que lanza
     `InvalidFileFormatException` (lote `REJECTED`, ninguna fila cargada) en lugar de `MALFORMED_ROW`.
-    | Alternativas: un `MALFORMED_ROW` con todo el resto del archivo | Reversible: sí | Pendiente de
-    confirmación del owner.
+    | Alternativas: un `MALFORMED_ROW` con todo el resto del archivo | Reversible: sí | Aprobado por:
+    owner (2026-10-21), "Acepto el D61."
+
+## Sprint 2 — Procesamiento por registro (2026-10-21)
+- Hecho: FR-13 (transformar y cargar), FR-11 (cuarentena, sin IA) y FR-12 en parte. `transform/`
+  convierte un registro válido en su fila canónica (AC-13.1) con `setScale(2, UNNECESSARY)`.
+  `triage/DisabledAiTriagePort` responde siempre "no disponible". `batch/RecordProcessor` decide un único
+  resultado por registro: válido → `DIRECT`; inválido o `MALFORMED_ROW` → cuarentena con
+  `AI_UNAVAILABLE`; cualquier `Exception` → cuarentena con `PROCESSING_ERROR` (NFR-06), sin skip policy.
+  `persistence/` escribe cada resultado solo en su tabla (AC-13.2, AC-11.1, AC-11.2); un error de BD en
+  un writer hace fallar el chunk, nunca acaba en cuarentena.
+- Decisiones del owner (2026-10-21):
+  - "Apruebo ON CONFLICT DO NOTHING con assertUpdates(false) en SalesTransactionWriter y
+    QuarantineWriter, con un test que demuestre que un conflicto real termina en INVARIANT_VIOLATION."
+  - "Acepto el D61."
+- Decisiones:
+  - D62: un writer propio (`ProcessedRecordWriter`) en lugar del `ClassifierCompositeItemWriter` que
+    nombra `04` §3. En Batch 6.0.5, este último escribe en el orden en que aparece cada tipo en el chunk,
+    y `05` §4 exige escribir primero las filas limpias, porque `correction_log` las referencia.
+    | Reversible: sí.
+  - D63: la violación `MALFORMED_ROW` lleva `expected = {}` y las columnas esperadas y recibidas en
+    `technicalMessage`. AC-07.4 dice que `expected` lleva "columnas esperadas vs recibidas", pero la lista
+    de claves de `06` A.1 no tiene ninguna para eso. Se resuelve con el contrato en el Sprint 3.
+    | Reversible: sí.
+  - D64: `PROCESSING_ERROR` conserva las violaciones encontradas antes de la excepción, y el `summary`
+    nombra la excepción. | Reversible: sí.
+  - D65: en un campo opcional, el transformador solo convierte en `null` la cadena vacía, igual que el
+    validador; cualquier otro token nulo se carga como texto ya validado. | Reversible: sí.
+  - D66: sin IA no hay llamada, así que `DisabledAiTriagePort` no escribe en `ai_call_log`, y las
+    columnas de IA de `quarantine_record` quedan en `null`. | Reversible: sí.
+  - D67: los enums `LoadOrigin` y `QuarantineReason` copian los catálogos completos de `02` §5 y `05`,
+    como ya hace `ErrorCode`; ningún valor nuevo. | Reversible: sí.
+- Hallazgo (sin cambiar el lector): una comilla suelta dentro de un campo sin comillas, como
+  `5" TILE`, abre una sección entre comillas que solo cierra la siguiente comilla. Con una sola, el
+  archivo se rechaza (D61). Con dos en filas distintas, las filas intermedias se funden en un único
+  `Parsed` y desaparecen sin error. El dataset real tiene 2.493 descripciones con `"`; las muestras las
+  escapan bien (`""`), pero un CSV exportado sin escapar perdería filas. Tests en `RawRecordReaderTest`.
+  Pendiente de decisión del owner.
+- Origen del límite de líneas citado en 3a: `FlatFileItemReader.DEFAULT_MAX_LINES_PER_RECORD = 1_000`,
+  que se aplica en el método privado `applyRecordSeparatorPolicy(String)` de
+  `spring-batch-infrastructure` 6.0.5.
+- Archivos protegidos modificados: ninguno.
+- Pendiente para la rama del job (`feat/FR-13-ingestion-job`):
+  - El intake recorre el archivo entero con el mismo lector y traduce `InvalidFileFormatException` a
+    `REJECTED`/`INVALID_FILE_FORMAT` antes de `processRecordsStep`. Tests de extremo a extremo con un
+    UTF-8 inválido al final y con una comilla sin cerrar en la última fila de un archivo de más de 100
+    filas: en ambos, 0 filas en `sales_transaction` y en `quarantine_record`.
+  - Si la excepción aparece dentro de `processRecordsStep`, el lote termina `FAILED`, nunca `REJECTED`.
+  - `schemaCheckStep` propio que solo comprueba la identidad, con la aprobación ya dada por el owner:
+    "Apruebo que, hasta FR-05, unas cabeceras distintas de las esperadas dejen el lote REJECTED con
+    SCHEMA_DRIFT_UNRESOLVED en un schemaCheckStep propio." Test con `drift-legacy-headers.csv`.
+  - Test de que un conflicto real en el `UNIQUE` de la BD termina en `FAILED INVARIANT_VIOLATION`, sin
+    manipular contadores.
+  - Test de reinicio (AC-04.4), adelantado desde el Sprint 7.
