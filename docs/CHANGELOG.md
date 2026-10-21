@@ -379,3 +379,14 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `ArithmeticException` termina en `PROCESSING_ERROR`, nunca en un redondeo.
   - Test que compruebe filas en `BATCH_JOB_EXECUTION` tras un job (`04` §3.1), con
     `spring-boot-starter-batch-jdbc-test` (D53).
+
+## Sprint 2 — Convenciones del owner en el repositorio (2026-10-20)
+- Hecho: `09` §6 amplía las filas "Idioma" y "Git" y añade "Comentarios", "Emojis" y "CI"; `AGENTS.md`
+  las resume en inglés en una sección "Conventions". Hasta ahora solo vivían en los prompts del owner.
+- Archivos protegidos modificados: `docs/09-reglas-para-agentes-ia.md` y `AGENTS.md`, con aprobación
+  explícita del owner: "Apruebo añadir a docs/09 §6 y a AGENTS.md las convenciones del owner: idioma,
+  comentarios, emojis, flujo de git con dev y sin atribución."
+- Pendiente:
+  - ⚠ en 05/10 y ⭐ en 07 fuera de la regla de emojis; limpieza en un PR docs/ aparte con aprobación.
+  - Si el agente puede usar git para leer (`status`, `diff`, `log`): la fila "Git" solo dice que el
+    owner ejecuta los comandos que modifican el repo, a la espera de su decisión.
