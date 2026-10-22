@@ -387,7 +387,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   explícita del owner: "Apruebo añadir a docs/09 §6 y a AGENTS.md las convenciones del owner: idioma,
   comentarios, emojis, flujo de git con dev y sin atribución."
 - Pendiente:
-  - ⚠ en 05/10 y ⭐ en 07 fuera de la regla de emojis; limpieza en un PR docs/ aparte con aprobación.
+  - Los emojis de advertencia en 05/10 y de estrella en 07 quedan fuera de la regla de emojis; limpieza en un PR docs/ aparte con aprobación.
   - Si el agente puede usar git para leer (`status`, `diff`, `log`): la fila "Git" solo dice que el
     owner ejecuta los comandos que modifican el repo, a la espera de su decisión.
 
@@ -571,3 +571,22 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `sales_transaction` → `correction_log` → `quarantine_record`.
 - El PR supera las ~400 líneas fuera de tests: unas 536 de Java, de las cuales unas 130 son SQL y la
   configuración del flujo.
+
+## Sprint 2 — Pendientes de documentación (2026-10-22)
+- Decisión del owner (2026-10-22): "Apruebo en una rama docs/pending-doc-fixes: actualizar docs/04 §3
+  por D70, quitar ⚠ y ⭐ de docs/05, docs/07, docs/10 y del CHANGELOG, y cerrar el pendiente de git
+  en lectura."
+- Hecho:
+  - `04` §3: `intakeStep` ya no marca el lote `RUNNING`. Lo hace el `JobExecutionListener` al empezar
+    cada ejecución, también en un reinicio, y guarda el `job_execution_id` (D70). Cierra el pendiente
+    de D70.
+  - Los emojis de advertencia de `05` y `10` pasan a "Atención:" y la estrella de `07` pasa a "núcleo
+    del proyecto", sin cambiar el sentido. El texto pendiente de la entrada del 2026-10-20 se reescribe
+    con palabras. Cierra el pendiente de la regla de emojis; la cita literal de la frase del owner, más
+    arriba, conserva sus caracteres.
+  - Pendiente de git en lectura (entrada del 2026-10-20), cerrado sin cambiar `09`: la fila "Git" dice
+    que el owner ejecuta los comandos de git que modifican el repo, así que leer (`status`, `diff`,
+    `log`) ya está permitido tal como está escrita.
+- Archivos protegidos modificados (con la aprobación del owner citada arriba): `docs/04-arquitectura.md`
+  §3, `docs/05-modelo-de-datos.md` §6, `docs/07-plan-de-sprints.md` (Sprint 4) y
+  `docs/10-datasets.md` §2.

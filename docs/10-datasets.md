@@ -21,7 +21,7 @@ La combinación evita la crítica habitual a los proyectos de demo ("solo funcio
 | Formato | Excel (.xlsx) con dos hojas (2009–2010 y 2010–2011) |
 | Columnas del archivo | `Invoice`, `StockCode`, `Description`, `Quantity`, `InvoiceDate`, `Price`, `Customer ID`, `Country` |
 
-> ⚠️ La ficha de UCI lista los nombres de variables de la versión anterior (`InvoiceNo`, `UnitPrice`, `CustomerID`). **En el Sprint 1 se verifican las cabeceras reales del archivo descargado** y el schema v1 se alinea con ellas. Esa misma diferencia de nombres entre versiones es la base del escenario de *schema drift* (FR-05).
+> **Atención:** la ficha de UCI lista los nombres de variables de la versión anterior (`InvoiceNo`, `UnitPrice`, `CustomerID`). **En el Sprint 1 se verifican las cabeceras reales del archivo descargado** y el schema v1 se alinea con ellas. Esa misma diferencia de nombres entre versiones es la base del escenario de *schema drift* (FR-05).
 
 ### Por qué este dataset
 
