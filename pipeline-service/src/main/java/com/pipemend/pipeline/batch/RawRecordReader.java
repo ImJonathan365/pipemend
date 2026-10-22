@@ -31,7 +31,7 @@ import org.springframework.core.io.Resource;
  */
 public final class RawRecordReader implements ItemStreamReader<RawRecord> {
 
-    private static final char BOM = '﻿';
+    private static final char BOM = (char) 0xFEFF;
     private static final char QUOTE = '"';
     private static final char COMMA = ',';
 
@@ -113,8 +113,12 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
 
     private void readHeader(String line) {
         Split split = split(line);
-        if (split.status() == Status.STRAY_QUOTE) {
-            throw new InvalidFileFormatException("the header row has a quote inside an unquoted column name");
+        // OPEN_QUOTE cannot reach here: skipped lines also go through the record separator policy (D69).
+        if (split.status() != Status.COMPLETE) {
+            throw new InvalidFileFormatException("the header row has a quote that does not open or close a name");
+        }
+        if (split.fields().isEmpty()) {
+            throw new InvalidFileFormatException("the header row is empty");
         }
         Set<String> seen = new HashSet<>();
         for (String name : split.fields()) {
@@ -192,7 +196,7 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT);
         BufferedReader reader = new BufferedReader(new InputStreamReader(resource.getInputStream(), utf8));
-        // Excel prepends a BOM; left in place it would turn the first header into "﻿Invoice" (AC-01.7).
+        // Excel prepends a BOM; left in place it would turn the first header into "<BOM>Invoice" (AC-01.7).
         reader.mark(1);
         if (reader.read() != BOM) {
             reader.reset();

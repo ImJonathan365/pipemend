@@ -58,7 +58,7 @@ class RawRecordReaderTest {
 
     @Test
     void ac_01_7_aLeadingBomIsRemoved() throws Exception {
-        RawRecordReader reader = open(bytes("﻿Invoice,Quantity\n536365,6\n"));
+        RawRecordReader reader = open(bytes((char) 0xFEFF + "Invoice,Quantity\n536365,6\n"));
 
         assertThat(reader.headers()).containsExactly("Invoice", "Quantity");
     }
@@ -126,9 +126,22 @@ class RawRecordReaderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"a,,c\n", "a, ,c\n", "a,\"\t\",c\n", "a,b,a\n"})
+    @ValueSource(strings = {"a,,c\n", "a, ,c\n", "a,\"\t\",c\n", "a,b,a\n", "\n"})
     void ac_01_8_anEmptyOrRepeatedHeaderIsAnInvalidFileFormat(String header) {
         assertThatThrownBy(() -> open(bytes(header + "1,2,3\n"))).isInstanceOf(InvalidFileFormatException.class);
+    }
+
+    @Test
+    void aQuotedLineBreakInTheHeaderStaysInTheHeader() throws Exception {
+        RawRecordReader reader = open(bytes("\"a\nb\",c\n1,2\n"));
+
+        assertThat(reader.headers()).containsExactly("a\nb", "c");
+        assertThat(reader.read()).isEqualTo(new RawRecord.Parsed(1, Map.of("a\nb", "1", "c", "2")));
+    }
+
+    @Test
+    void aHeaderWithAQuoteThatNeverClosesIsAnInvalidFileFormat() {
+        assertThatThrownBy(() -> open(bytes("\"a\nb,c\n1,2\n"))).isInstanceOf(InvalidFileFormatException.class);
     }
 
     @Test

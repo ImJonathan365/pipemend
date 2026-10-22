@@ -491,3 +491,19 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     tal cual a `technicalMessage` (D63). | Alternativas: mantener `DelimitedLineTokenizer` y validar
     las comillas aparte, con dos reglas que podrían divergir | Reversible: sí.
 - Archivos protegidos modificados: ninguno.
+
+## Sprint 2 — Casos límite de la cabecera CSV (2026-10-21)
+- Corregido: FR-01 (AC-01.8). Desde D68, una primera línea vacía daba una cabecera sin columnas que se
+  aceptaba, y cada fila terminaba en `MALFORMED_ROW` en lugar de rechazar el lote con
+  `INVALID_FILE_FORMAT`. Ahora lanza `InvalidFileFormatException`.
+- Decisiones:
+  - D69: la cabecera se rechaza si su separación no termina limpia, ya sea por una comilla suelta o por
+    una comilla abierta. El segundo caso no puede darse: en `spring-batch-infrastructure` 6.0.5,
+    `FlatFileItemReader.doOpen()` lee las líneas que salta (`setLinesToSkip`) con el mismo método
+    privado `readLine()` que los registros, y `readLine()` aplica `applyRecordSeparatorPolicy`. Así, una
+    cabecera con un salto de línea entre comillas se lee entera, y si la comilla nunca se cierra el
+    archivo se rechaza (D61). La comprobación queda como defensa y hay un test para cada caso.
+    | Reversible: sí.
+  - El BOM se escribe como `(char) 0xFEFF` en el código y en los tests, porque el formateador
+    convertía el escape `﻿` en el carácter literal, que es invisible.
+- Archivos protegidos modificados: ninguno.
