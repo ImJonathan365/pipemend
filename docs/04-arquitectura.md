@@ -80,7 +80,7 @@ ingestionJob  (parámetros identificadores: batchId, sourceChecksum)
 │                 (nunca lanza por contenido; filas malformadas se marcan;
 │                  implementa ItemStream: guarda/restaura posición para reinicio)
 │      Processor: RecordProcessor → ProcessedRecord (ver §4)
-│      Writer:    ClassifierCompositeItemWriter
+│      Writer:    ProcessedRecordWriter (orden fijo: sales_transaction → correction_log → quarantine_record)
 │                   ├─ DIRECT / AUTO_CORRECTED → SalesTransactionWriter (+ CorrectionLogWriter)
 │                   └─ QUARANTINED            → QuarantineWriter
 │      (sin skip policy; excepciones por registro → PROCESSING_ERROR)

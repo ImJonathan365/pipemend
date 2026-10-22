@@ -505,5 +505,69 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     archivo se rechaza (D61). La comprobación queda como defensa y hay un test para cada caso.
     | Reversible: sí.
   - El BOM se escribe como `(char) 0xFEFF` en el código y en los tests, porque el formateador
-    convertía el escape `﻿` en el carácter literal, que es invisible.
+    convertía el escape `\uFEFF` en el carácter literal, que es invisible.
 - Archivos protegidos modificados: ninguno.
+
+## Sprint 2 — Job de ingesta (2026-10-21)
+- Hecho: FR-13, NFR-04, NFR-06 y FR-05 solo en el rechazo por identidad. `ingestionJob` con los cuatro
+  steps de `04` §3, lanzado de forma asíncrona con `JobOperator` sobre un ejecutor de un hilo (NFR-10):
+  - `intakeStep` cuenta los registros con el mismo lector antes de procesar nada (NFR-06). Si el
+    archivo no se puede leer, el lote termina `REJECTED` con `INVALID_FILE_FORMAT`.
+  - `schemaCheckStep` acepta solo cabeceras idénticas (AC-05.1). Si no lo son, el lote termina
+    `REJECTED` con `SCHEMA_DRIFT_UNRESOLVED` y un `schema_drift_report`.
+  - `processRecordsStep` procesa por chunks de `PIPELINE_CHUNK_SIZE`, sin skip policy ni reintentos.
+  - `finalizeStep` comprueba las tres partes del invariante y cierra el lote como `COMPLETED`, o lo
+    deja `FAILED` con `INVARIANT_VIOLATION`.
+  Tests de extremo a extremo: `clean-1k` → 1000 `DIRECT`; `dirty-1k` → 950 `DIRECT` y 50 en
+  cuarentena con `AI_UNAVAILABLE`; filas en `BATCH_JOB_EXECUTION`; cabecera repetida, UTF-8 inválido al
+  final y comilla sin cerrar en la última fila → `REJECTED` con 0 filas en las dos tablas;
+  `drift-legacy-headers.csv` → `SCHEMA_DRIFT_UNRESOLVED`.
+- Adelantado desde el Sprint 7: el test de reinicio (AC-04.4). Un fallo real de la BD en la fila 250
+  deja 200 filas confirmadas; `JobOperator.restart` retoma desde la 201 (el step lee 800 registros), sin
+  duplicados y con el invariante cumplido.
+- Decisiones del owner (2026-10-21):
+  - "Apruebo que, hasta FR-05, unas cabeceras distintas de las esperadas dejen el lote REJECTED con
+    SCHEMA_DRIFT_UNRESOLVED en un schemaCheckStep propio."
+  - "Apruebo actualizar docs/04 §3 y docs/05 para que nombren ProcessedRecordWriter en lugar de
+    ClassifierCompositeItemWriter, en la rama 3c."
+- Decisiones:
+  - D70: el lote pasa a `RUNNING` y guarda su `job_execution_id` en el `JobExecutionListener`
+    (`beforeJob`), no en `intakeStep` como dice `04` §3. En un reinicio, `intakeStep` ya está
+    `COMPLETED` y no se vuelve a ejecutar, así que el lote se quedaría en `FAILED` mientras se reprocesa.
+    Actualizar `04` §3 queda pendiente de aprobación (🟠). | Reversible: sí.
+  - D71: "idénticas" significa los mismos nombres, sin uno de más ni de menos, en cualquier orden: las
+    columnas se leen por nombre, así que el orden no cambia nada. Una cabecera opcional ausente o una
+    cabecera extra también rechazan el lote hasta FR-05 (AC-05.4 y AC-05.8 son de FR-05).
+    | Reversible: sí.
+  - D72: con cabeceras idénticas se guarda `schema_mapping` con `strategy = IDENTITY` y la forma de
+    `05` §5 (AC-05.1). | Reversible: sí.
+  - D73: cualquier fallo que no sea el del invariante, incluida una `InvalidFileFormatException`
+    dentro de `processRecordsStep`, deja el lote `FAILED` con `INFRASTRUCTURE_ERROR`, nunca `REJECTED`.
+    El listener distingue `INVARIANT_VIOLATION` por el tipo de la excepción. | Reversible: sí.
+  - D74: enmienda D53. `spring-boot-starter-batch-jdbc-test` no se añade: los tests usan `JobOperator`
+    y `JobRepository` directamente, y `@SpringBatchTest` crearía un segundo contexto de Spring y un
+    segundo contenedor. La única dependencia nueva es `awaitility`, de test y gestionada por el BOM.
+    | Reversible: sí.
+  - D75: los tests provocan los fallos con triggers temporales de PostgreSQL limitados al lote del test:
+    un `RAISE EXCEPTION` en la fila 250, y una renumeración de la fila 6 a la 5 para provocar un
+    conflicto real en el `UNIQUE`. Son errores reales de la BD; no se simula el validador ni los
+    writers. | Reversible: sí.
+  - D76: los beans `@StepScope` se declaran por su interfaz (`ItemStreamReader`, `ItemProcessor`),
+    porque el proxy de clase no puede extender `RawRecordReader` ni `RecordProcessor`, que son `final`.
+    | Reversible: sí.
+  - D77: propiedades `pipemend.inbox-dir` (por defecto `/data/inbox`, sin variable de entorno nueva) y
+    `pipemend.chunk-size`, que lee `PIPELINE_CHUNK_SIZE` con su valor por defecto de 100, el mismo de
+    `.env.example`. Además, `spring.batch.job.enabled: false`: Boot lanzaría el job al arrancar, sin
+    parámetros. | Reversible: sí.
+- Verificado en el código fuente de Spring Boot 4.1.1: un bean `@BatchTaskExecutor` llega al
+  `JobOperator` por `BatchJdbcAutoConfiguration.SpringBootBatchJdbcConfiguration.getTaskExecutor()`,
+  que lo pasa a `DefaultBatchConfiguration.jobOperator()` (`setTaskExecutor(getTaskExecutor())`, Spring
+  Batch 6.0.5).
+- Hallazgo: el invariante detecta un conflicto que descarta un registro distinto (falta su número: el
+  test lo prueba). No detecta, y no debe detectar, que se reprocese un número ya escrito con el mismo
+  contenido: es justo lo que la red de seguridad cubre en un reinicio (AC-04.4).
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/04-arquitectura.md` §3 y
+  `docs/05-modelo-de-datos.md` §4 (notas), que ahora nombran `ProcessedRecordWriter` y el orden
+  `sales_transaction` → `correction_log` → `quarantine_record`.
+- El PR supera las ~400 líneas fuera de tests: unas 536 de Java, de las cuales unas 130 son SQL y la
+  configuración del flujo.
