@@ -10,6 +10,12 @@ spring:
       # transaction is still open, so the pool must hold a second connection per running job.
       maximum-pool-size: 10
 
+  servlet:
+    multipart:
+      # AC-01.4: both limits follow PIPELINE_MAX_UPLOAD_MB, so the multipart overhead counts too.
+      max-file-size: ${PIPELINE_MAX_UPLOAD_MB:50}MB
+      max-request-size: ${PIPELINE_MAX_UPLOAD_MB:50}MB
+
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -28,6 +34,10 @@ pipemend:
 
 server:
   port: 8080
+  tomcat:
+    # Tomcat rejects an oversized upload from its Content-Length and, past 2 MB of unread body, closes the connection
+    # while the client is still sending: many clients then never see the 413 (AC-01.4). This reads and discards it.
+    max-swallow-size: -1
 
 management:
   endpoints:
