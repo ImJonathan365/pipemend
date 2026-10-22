@@ -384,7 +384,7 @@ GROUP BY b.read_count;
 
 Resumen de métricas (base de FR-15):
 
-> ⚠️ **Trampa de JDBC + PostgreSQL** (rev: R-22): el patrón `(:batchId IS NULL OR batch_id = :batchId)` falla con `could not determine data type of parameter $1` cuando el parámetro llega como `null` sin tipo. Usar `CAST(:batchId AS uuid) IS NULL`, o construir el `WHERE` dinámicamente con parámetros. Los filtros `from`/`to` se aplican sobre `ingestion_batch.received_at` y las demás tablas se unen por `batch_id` (AC-15.2); las consultas de abajo muestran solo el filtro por lote por brevedad.
+> **Atención: trampa de JDBC + PostgreSQL** (rev: R-22): el patrón `(:batchId IS NULL OR batch_id = :batchId)` falla con `could not determine data type of parameter $1` cuando el parámetro llega como `null` sin tipo. Usar `CAST(:batchId AS uuid) IS NULL`, o construir el `WHERE` dinámicamente con parámetros. Los filtros `from`/`to` se aplican sobre `ingestion_batch.received_at` y las demás tablas se unen por `batch_id` (AC-15.2); las consultas de abajo muestran solo el filtro por lote por brevedad.
 
 ```sql
 SELECT load_origin, count(*) FROM sales_transaction WHERE (CAST(:batchId AS uuid) IS NULL OR batch_id = :batchId) GROUP BY load_origin;

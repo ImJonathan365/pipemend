@@ -98,7 +98,7 @@ Camino crítico: **1 → 2 → 3 → 4**. Al terminar el Sprint 4 existe el **n�
 
 **Entregables:** `dirty-1k.csv` → válidos en tabla limpia, inválidos en cuarentena con análisis del mock. Invariante de conteo verificado.
 
-### Sprint 4 — Auto-corrección segura (plan original ~10 h; realista ~14 h) ⭐ núcleo
+### Sprint 4 — Auto-corrección segura (plan original ~10 h; realista ~14 h), núcleo del proyecto
 
 | Tarea | h |
 |---|---|
