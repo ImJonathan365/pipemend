@@ -18,6 +18,13 @@ spring:
     jdbc:
       # BATCH_* tables come from Flyway V1, never from Spring Batch itself (docs/05 section 1).
       initialize-schema: never
+    # Boot would otherwise launch every job at startup, without the parameters a batch needs.
+    job:
+      enabled: false
+
+pipemend:
+  inbox-dir: /data/inbox
+  chunk-size: ${PIPELINE_CHUNK_SIZE:100}
 
 server:
   port: 8080
