@@ -25,6 +25,8 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	implementation("org.springframework.boot:spring-boot-starter-jdbc")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
+	// Not managed by the Boot BOM; 3.1.1 is built against Spring Boot 4.1.
+	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1")
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("org.yaml:snakeyaml")
 	runtimeOnly("org.postgresql:postgresql")

@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class Inbox {
 
+    public static final String SOURCE_FILE = "source.csv";
+
     private final Path root;
 
     public Inbox(@Value("${pipemend.inbox-dir}") Path root) {
@@ -22,6 +24,6 @@ public class Inbox {
     }
 
     public Resource source(UUID batchId) {
-        return new FileSystemResource(directory(batchId).resolve("source.csv"));
+        return new FileSystemResource(directory(batchId).resolve(SOURCE_FILE));
     }
 }
