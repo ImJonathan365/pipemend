@@ -590,3 +590,65 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados (con la aprobación del owner citada arriba): `docs/04-arquitectura.md`
   §3, `docs/05-modelo-de-datos.md` §6, `docs/07-plan-de-sprints.md` (Sprint 4) y
   `docs/10-datasets.md` §2.
+
+## Sprint 2 — Endpoint de ingesta (2026-10-22)
+- Hecho: FR-01 (AC-01.1 a AC-01.4, AC-01.6) y NFR-20. `POST /api/v1/ingestions` comprueba la extensión,
+  guarda el archivo en `inbox/{batchId}/source.csv` mientras calcula el SHA-256, rechaza un archivo
+  vacío o con solo cabecera, registra el lote en `RECEIVED` y lanza el job solo con
+  `JobOperator.start(ingestionJob, batchId + sourceChecksum)`. Responde `202` con `Location` y el cuerpo
+  de `06` B.1. Los errores salen en `problem+json` con `code` y `requestId`: `400 EMPTY_FILE`,
+  `400 MISSING_FILE`, `413 FILE_TOO_LARGE` y `415 UNSUPPORTED_MEDIA_TYPE`. Swagger UI en
+  `/swagger-ui.html`.
+- Decisiones del owner (2026-10-22):
+  - "Apruebo añadir springdoc-openapi-starter-webmvc-ui 3.1.1 como dependencia de runtime de
+    pipeline-service."
+  - "Apruebo que, hasta FR-02, POST /api/v1/ingestions responda 415 a los archivos .json." Hasta
+    entonces, el comportamiento es más estricto que AC-01.2, que acepta `.json`.
+- Decisiones:
+  - D78: el `status` del `202` es `RECEIVED` si el lote sigue en cola y `RUNNING` si el job ya arrancó,
+    aunque ya haya terminado: `06` B.1 solo admite esos dos valores, y el estado final lo da la consulta
+    del lote (FR-14). | Reversible: sí.
+  - D79: la comprobación de archivo vacío lee solo hasta el primer registro, con el lector del job. Un
+    archivo que no se puede leer (UTF-8 inválido, cabecera vacía o repetida) no es un `400`: el lote se
+    crea y el job lo deja `REJECTED` (AC-01.7, AC-01.8). | Reversible: sí.
+  - D80: el `INSERT` del lote se confirma antes de `JobOperator.start`, porque el job corre en otro
+    hilo. Endurece el código de 3c: los `UPDATE` de `IngestionBatchRepository` exigen haber actualizado
+    exactamente una fila, y si no, lanzan una excepción en lugar de dejar el lote en un estado viejo.
+    | Reversible: sí.
+  - D81: cualquier fallo después de escribir el archivo borra `inbox/{batchId}/`. Si
+    `JobOperator.start` falla, el lote pasa a `FAILED` con `INFRASTRUCTURE_ERROR` y la respuesta es
+    `500`. | Reversible: sí.
+  - D82: `X-Request-Id` solo se acepta si es un UUID; si no, se genera uno. Va al MDC (`requestId`), a la
+    cabecera de respuesta y al `problem+json`. La propagación entre servicios es del Sprint 5.
+    | Reversible: sí.
+  - D83: el `type` de cada error sigue el patrón documentado en B.1
+    (`https://pipemend.dev/problems/<code>`). Los errores propios de Spring (404, 405, tipo de contenido
+    incorrecto) conservan su estado y su cuerpo, más el `requestId`, sin inventar códigos.
+    | Reversible: sí.
+  - D84: `max-file-size` y `max-request-size` salen los dos de `PIPELINE_MAX_UPLOAD_MB`, como pide
+    AC-01.4. Un archivo de exactamente 50 MB puede rechazarse, porque la cabecera multipart también
+    cuenta. | Reversible: sí.
+  - D85: `server.tomcat.max-swallow-size: -1`. Tomcat rechaza una subida demasiado grande a partir de
+    su `Content-Length` y, con más de 2 MB sin leer, corta la conexión mientras el cliente sigue
+    enviando, así que muchos clientes no llegan a ver el `413` (lo reprodujo el test con el cliente HTTP
+    del JDK). Con `-1`, Tomcat lee y descarta el resto antes de responder. Coste: el servidor recibe la
+    subida entera aunque la rechace; aceptable en un servicio local sin autenticación (X-02).
+    | Alternativas: un tope fijo, a cambio de que las subidas mayores vuelvan a cortarse
+    | Reversible: sí | Pendiente de confirmación del owner.
+  - D86: `source_filename` guarda solo el último segmento del nombre, sin caracteres de control y con 255
+    caracteres como máximo (se recorta por el principio y la extensión se conserva). | Reversible: sí.
+  - D87: el contenedor de test es estático y lo comparten todos los contextos. El test del endpoint
+    necesita un servidor HTTP real (MockMvc no aplica los límites de multipart) y por eso abre un segundo
+    contexto. La suite sigue arrancando un solo contenedor. | Reversible: sí.
+- TODO(owner-decision): `06` no define `code` para un `500` inesperado. Se responde `problem+json` sin
+  `code`, porque añadir uno sería un valor nuevo de contrato (`09` §2.2).
+- Pendiente para 4b (`feat/FR-04-duplicate-ingestion`):
+  - Traducir el `23505` de `uq_batch_checksum_active` a `409 DUPLICATE_INGESTION`, con
+    `existingBatchId` y `existingStatus`. Hasta entonces, un archivo duplicado devuelve `500` sin crear
+    lote ni dejar archivo. `dev` no debe pasar a `main` entre 4a y 4b.
+  - Para un lote previo `FAILED`, el `detail` dice que el lote anterior falló y que reenviarlo
+    duplicaría datos, sin nombrar ninguna ruta. Añadir la sugerencia de restart cuando llegue FR-21, o
+    documentar la limitación en el README si FR-21 se recorta.
+- Archivos protegidos modificados: ninguno. `build.gradle.kts` recibe una dependencia de runtime nueva
+  con aprobación explícita del owner; no cambia ninguna versión mayor.
+- Tamaño: unas 435 líneas fuera de tests más esta entrada, frente a las ~360 estimadas. Supera las ~400.
