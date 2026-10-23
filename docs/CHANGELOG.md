@@ -379,3 +379,311 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `ArithmeticException` termina en `PROCESSING_ERROR`, nunca en un redondeo.
   - Test que compruebe filas en `BATCH_JOB_EXECUTION` tras un job (`04` §3.1), con
     `spring-boot-starter-batch-jdbc-test` (D53).
+
+## Sprint 2 — Convenciones del owner en el repositorio (2026-10-20)
+- Hecho: `09` §6 amplía las filas "Idioma" y "Git" y añade "Comentarios", "Emojis" y "CI"; `AGENTS.md`
+  las resume en inglés en una sección "Conventions". Hasta ahora solo vivían en los prompts del owner.
+- Archivos protegidos modificados: `docs/09-reglas-para-agentes-ia.md` y `AGENTS.md`, con aprobación
+  explícita del owner: "Apruebo añadir a docs/09 §6 y a AGENTS.md las convenciones del owner: idioma,
+  comentarios, emojis, flujo de git con dev y sin atribución."
+- Pendiente:
+  - Los emojis de advertencia en 05/10 y de estrella en 07 quedan fuera de la regla de emojis; limpieza en un PR docs/ aparte con aprobación.
+  - Si el agente puede usar git para leer (`status`, `diff`, `log`): la fila "Git" solo dice que el
+    owner ejecuta los comandos que modifican el repo, a la espera de su decisión.
+
+## Sprint 2 — Lector CSV (2026-10-21)
+- Hecho: FR-01 (lectura). `batch/RawRecordReader` lee CSV UTF-8 con cabecera y comillas RFC 4180 y
+  devuelve `RawRecord.Parsed` o `RawRecord.Malformed`; nunca lanza por el contenido de un registro
+  (AC-01.5). Quita el BOM, acepta `\n` y `\r\n` y numera registros lógicos (AC-01.7). Una cabecera vacía
+  o repetida, un archivo sin cabecera o un UTF-8 inválido lanzan `InvalidFileFormatException`, que la
+  rama del job traducirá a `REJECTED` con `INVALID_FILE_FORMAT` (AC-01.8). Es reiniciable: la posición
+  vive en el `ExecutionContext` (la parte de NFR-04 que corresponde al lector).
+- AC-19.4 completo: `SampleValidationTest` lee `dirty-1k` con el lector real y comprueba las 50 filas
+  etiquetadas, incluidas las 2 de `COLUMN_SHIFT` (`MALFORMED_ROW`), que antes se saltaba.
+- Decisión del owner (2026-10-21): "Apruebo partir la rama 3 en 3a, 3b y 3c; que 3b toque FR-13, FR-11
+  y FR-12 (DisabledAiTriagePort) y que 3c toque FR-13, FR-05 (solo el rechazo por identidad), NFR-04 y
+  NFR-06."
+- Decisiones:
+  - D57: el lector delega en `FlatFileItemReader` (reinicio y conteo de registros) y separa columnas con
+    `DelimitedLineTokenizer` en modo estricto, con los nombres de la cabecera; un número de columnas
+    distinto llega como `IncorrectTokenCountException` y se convierte en `Malformed`. Sin dependencias
+    nuevas. | Alternativas: un parser propio; Commons CSV | Reversible: sí.
+  - D58: se desactivan dos comportamientos por defecto de Batch 6.0.5 que alteran datos en silencio:
+    las líneas que empiezan por `#` se descartaban como comentarios, y una línea terminada en `\` se
+    unía con la siguiente. | Reversible: sí.
+  - D59: un salto de línea dentro de un campo entre comillas llega como `\n`, también si el archivo usa
+    `\r\n`. | Reversible: sí.
+  - D60: una línea vacía es un registro `MALFORMED_ROW` con 0 columnas, no se ignora; el conteo de
+    NFR-06 la cuenta igual porque usa el mismo lector. | Reversible: sí.
+  - D61: una comilla sin cerrar hace que el archivo no se pueda partir en registros, así que lanza
+    `InvalidFileFormatException` (lote `REJECTED`, ninguna fila cargada) en lugar de `MALFORMED_ROW`.
+    | Alternativas: un `MALFORMED_ROW` con todo el resto del archivo | Reversible: sí | Aprobado por:
+    owner (2026-10-21), "Acepto el D61."
+
+## Sprint 2 — Procesamiento por registro (2026-10-21)
+- Hecho: FR-13 (transformar y cargar), FR-11 (cuarentena, sin IA) y FR-12 en parte. `transform/`
+  convierte un registro válido en su fila canónica (AC-13.1) con `setScale(2, UNNECESSARY)`.
+  `triage/DisabledAiTriagePort` responde siempre "no disponible". `batch/RecordProcessor` decide un único
+  resultado por registro: válido → `DIRECT`; inválido o `MALFORMED_ROW` → cuarentena con
+  `AI_UNAVAILABLE`; cualquier `Exception` → cuarentena con `PROCESSING_ERROR` (NFR-06), sin skip policy.
+  `persistence/` escribe cada resultado solo en su tabla (AC-13.2, AC-11.1, AC-11.2); un error de BD en
+  un writer hace fallar el chunk, nunca acaba en cuarentena.
+- Decisiones del owner (2026-10-21):
+  - "Apruebo ON CONFLICT DO NOTHING con assertUpdates(false) en SalesTransactionWriter y
+    QuarantineWriter, con un test que demuestre que un conflicto real termina en INVARIANT_VIOLATION."
+  - "Acepto el D61."
+- Decisiones:
+  - D62: un writer propio (`ProcessedRecordWriter`) en lugar del `ClassifierCompositeItemWriter` que
+    nombra `04` §3. En Batch 6.0.5, este último escribe en el orden en que aparece cada tipo en el chunk,
+    y `05` §4 exige escribir primero las filas limpias, porque `correction_log` las referencia.
+    | Reversible: sí.
+  - D63: la violación `MALFORMED_ROW` lleva `expected = {}` y las columnas esperadas y recibidas en
+    `technicalMessage`. AC-07.4 dice que `expected` lleva "columnas esperadas vs recibidas", pero la lista
+    de claves de `06` A.1 no tiene ninguna para eso. Se resuelve con el contrato en el Sprint 3.
+    | Reversible: sí.
+  - D64: `PROCESSING_ERROR` conserva las violaciones encontradas antes de la excepción, y el `summary`
+    nombra la excepción. | Reversible: sí.
+  - D65: en un campo opcional, el transformador solo convierte en `null` la cadena vacía, igual que el
+    validador; cualquier otro token nulo se carga como texto ya validado. | Reversible: sí.
+  - D66: sin IA no hay llamada, así que `DisabledAiTriagePort` no escribe en `ai_call_log`, y las
+    columnas de IA de `quarantine_record` quedan en `null`. | Reversible: sí.
+  - D67: los enums `LoadOrigin` y `QuarantineReason` copian los catálogos completos de `02` §5 y `05`,
+    como ya hace `ErrorCode`; ningún valor nuevo. | Reversible: sí.
+- Hallazgo (sin cambiar el lector): una comilla suelta dentro de un campo sin comillas, como
+  `5" TILE`, abre una sección entre comillas que solo cierra la siguiente comilla. Con una sola, el
+  archivo se rechaza (D61). Con dos en filas distintas, las filas intermedias se funden en un único
+  `Parsed` y desaparecen sin error. El dataset real tiene 2.493 descripciones con `"`; las muestras las
+  escapan bien (`""`), pero un CSV exportado sin escapar perdería filas. Tests en `RawRecordReaderTest`.
+  Pendiente de decisión del owner.
+- Origen del límite de líneas citado en 3a: `FlatFileItemReader.DEFAULT_MAX_LINES_PER_RECORD = 1_000`,
+  que se aplica en el método privado `applyRecordSeparatorPolicy(String)` de
+  `spring-batch-infrastructure` 6.0.5.
+- Archivos protegidos modificados: ninguno.
+- Pendiente para la rama del job (`feat/FR-13-ingestion-job`):
+  - El intake recorre el archivo entero con el mismo lector y traduce `InvalidFileFormatException` a
+    `REJECTED`/`INVALID_FILE_FORMAT` antes de `processRecordsStep`. Tests de extremo a extremo con un
+    UTF-8 inválido al final y con una comilla sin cerrar en la última fila de un archivo de más de 100
+    filas: en ambos, 0 filas en `sales_transaction` y en `quarantine_record`.
+  - Si la excepción aparece dentro de `processRecordsStep`, el lote termina `FAILED`, nunca `REJECTED`.
+  - `schemaCheckStep` propio que solo comprueba la identidad, con la aprobación ya dada por el owner:
+    "Apruebo que, hasta FR-05, unas cabeceras distintas de las esperadas dejen el lote REJECTED con
+    SCHEMA_DRIFT_UNRESOLVED en un schemaCheckStep propio." Test con `drift-legacy-headers.csv`.
+  - Test de que un conflicto real en el `UNIQUE` de la BD termina en `FAILED INVARIANT_VIOLATION`, sin
+    manipular contadores.
+  - Test de reinicio (AC-04.4), adelantado desde el Sprint 7.
+
+## Sprint 2 — Comillas sueltas en el lector CSV (2026-10-21)
+- Corregido: FR-01 (AC-01.5). Una comilla suelta dentro de un campo sin comillas (`5" TILE`) abría
+  una sección entre comillas que solo cerraba la siguiente comilla del archivo. Con dos comillas
+  sueltas en filas distintas, las filas intermedias se fundían en un único registro válido y se
+  perdían sin error, y el invariante de NFR-06 no lo detectaba.
+- Decisión del owner (2026-10-21): "Apruebo que una comilla en medio de un campo sin comillas convierta
+  esa línea en MALFORMED_ROW, en una rama fix/FR-01-stray-quote antes de 3c."
+- Decisiones:
+  - D68: el lector sigue RFC 4180 estricto. Una comilla solo abre un campo entre comillas si es su
+    primer carácter, y tras la comilla de cierre solo puede venir una coma o el fin del registro.
+    Cualquier otra comilla convierte esa línea física en `RawRecord.Malformed` con la línea original,
+    y nunca la une con otras. La separación en columnas y el fin de registro salen del mismo método, así
+    que aplican la misma regla. Sustituye al `DelimitedLineTokenizer` de D57; `FlatFileItemReader`
+    sigue a cargo del reinicio y del conteo. Consecuencia: un espacio antes de una comilla de apertura
+    (`a, "b"`) también es una comilla suelta. D61 no cambia: una comilla de apertura que nunca se
+    cierra sigue rechazando el lote. `RawRecord.Malformed` pasa a llevar el motivo en texto, que llega
+    tal cual a `technicalMessage` (D63). | Alternativas: mantener `DelimitedLineTokenizer` y validar
+    las comillas aparte, con dos reglas que podrían divergir | Reversible: sí.
+- Archivos protegidos modificados: ninguno.
+
+## Sprint 2 — Casos límite de la cabecera CSV (2026-10-21)
+- Corregido: FR-01 (AC-01.8). Desde D68, una primera línea vacía daba una cabecera sin columnas que se
+  aceptaba, y cada fila terminaba en `MALFORMED_ROW` en lugar de rechazar el lote con
+  `INVALID_FILE_FORMAT`. Ahora lanza `InvalidFileFormatException`.
+- Decisiones:
+  - D69: la cabecera se rechaza si su separación no termina limpia, ya sea por una comilla suelta o por
+    una comilla abierta. El segundo caso no puede darse: en `spring-batch-infrastructure` 6.0.5,
+    `FlatFileItemReader.doOpen()` lee las líneas que salta (`setLinesToSkip`) con el mismo método
+    privado `readLine()` que los registros, y `readLine()` aplica `applyRecordSeparatorPolicy`. Así, una
+    cabecera con un salto de línea entre comillas se lee entera, y si la comilla nunca se cierra el
+    archivo se rechaza (D61). La comprobación queda como defensa y hay un test para cada caso.
+    | Reversible: sí.
+  - El BOM se escribe como `(char) 0xFEFF` en el código y en los tests, porque el formateador
+    convertía el escape `\uFEFF` en el carácter literal, que es invisible.
+- Archivos protegidos modificados: ninguno.
+
+## Sprint 2 — Job de ingesta (2026-10-21)
+- Hecho: FR-13, NFR-04, NFR-06 y FR-05 solo en el rechazo por identidad. `ingestionJob` con los cuatro
+  steps de `04` §3, lanzado de forma asíncrona con `JobOperator` sobre un ejecutor de un hilo (NFR-10):
+  - `intakeStep` cuenta los registros con el mismo lector antes de procesar nada (NFR-06). Si el
+    archivo no se puede leer, el lote termina `REJECTED` con `INVALID_FILE_FORMAT`.
+  - `schemaCheckStep` acepta solo cabeceras idénticas (AC-05.1). Si no lo son, el lote termina
+    `REJECTED` con `SCHEMA_DRIFT_UNRESOLVED` y un `schema_drift_report`.
+  - `processRecordsStep` procesa por chunks de `PIPELINE_CHUNK_SIZE`, sin skip policy ni reintentos.
+  - `finalizeStep` comprueba las tres partes del invariante y cierra el lote como `COMPLETED`, o lo
+    deja `FAILED` con `INVARIANT_VIOLATION`.
+  Tests de extremo a extremo: `clean-1k` → 1000 `DIRECT`; `dirty-1k` → 950 `DIRECT` y 50 en
+  cuarentena con `AI_UNAVAILABLE`; filas en `BATCH_JOB_EXECUTION`; cabecera repetida, UTF-8 inválido al
+  final y comilla sin cerrar en la última fila → `REJECTED` con 0 filas en las dos tablas;
+  `drift-legacy-headers.csv` → `SCHEMA_DRIFT_UNRESOLVED`.
+- Adelantado desde el Sprint 7: el test de reinicio (AC-04.4). Un fallo real de la BD en la fila 250
+  deja 200 filas confirmadas; `JobOperator.restart` retoma desde la 201 (el step lee 800 registros), sin
+  duplicados y con el invariante cumplido.
+- Decisiones del owner (2026-10-21):
+  - "Apruebo que, hasta FR-05, unas cabeceras distintas de las esperadas dejen el lote REJECTED con
+    SCHEMA_DRIFT_UNRESOLVED en un schemaCheckStep propio."
+  - "Apruebo actualizar docs/04 §3 y docs/05 para que nombren ProcessedRecordWriter en lugar de
+    ClassifierCompositeItemWriter, en la rama 3c."
+- Decisiones:
+  - D70: el lote pasa a `RUNNING` y guarda su `job_execution_id` en el `JobExecutionListener`
+    (`beforeJob`), no en `intakeStep` como dice `04` §3. En un reinicio, `intakeStep` ya está
+    `COMPLETED` y no se vuelve a ejecutar, así que el lote se quedaría en `FAILED` mientras se reprocesa.
+    Actualizar `04` §3 queda pendiente de aprobación (🟠). | Reversible: sí.
+  - D71: "idénticas" significa los mismos nombres, sin uno de más ni de menos, en cualquier orden: las
+    columnas se leen por nombre, así que el orden no cambia nada. Una cabecera opcional ausente o una
+    cabecera extra también rechazan el lote hasta FR-05 (AC-05.4 y AC-05.8 son de FR-05).
+    | Reversible: sí.
+  - D72: con cabeceras idénticas se guarda `schema_mapping` con `strategy = IDENTITY` y la forma de
+    `05` §5 (AC-05.1). | Reversible: sí.
+  - D73: cualquier fallo que no sea el del invariante, incluida una `InvalidFileFormatException`
+    dentro de `processRecordsStep`, deja el lote `FAILED` con `INFRASTRUCTURE_ERROR`, nunca `REJECTED`.
+    El listener distingue `INVARIANT_VIOLATION` por el tipo de la excepción. | Reversible: sí.
+  - D74: enmienda D53. `spring-boot-starter-batch-jdbc-test` no se añade: los tests usan `JobOperator`
+    y `JobRepository` directamente, y `@SpringBatchTest` crearía un segundo contexto de Spring y un
+    segundo contenedor. La única dependencia nueva es `awaitility`, de test y gestionada por el BOM.
+    | Reversible: sí.
+  - D75: los tests provocan los fallos con triggers temporales de PostgreSQL limitados al lote del test:
+    un `RAISE EXCEPTION` en la fila 250, y una renumeración de la fila 6 a la 5 para provocar un
+    conflicto real en el `UNIQUE`. Son errores reales de la BD; no se simula el validador ni los
+    writers. | Reversible: sí.
+  - D76: los beans `@StepScope` se declaran por su interfaz (`ItemStreamReader`, `ItemProcessor`),
+    porque el proxy de clase no puede extender `RawRecordReader` ni `RecordProcessor`, que son `final`.
+    | Reversible: sí.
+  - D77: propiedades `pipemend.inbox-dir` (por defecto `/data/inbox`, sin variable de entorno nueva) y
+    `pipemend.chunk-size`, que lee `PIPELINE_CHUNK_SIZE` con su valor por defecto de 100, el mismo de
+    `.env.example`. Además, `spring.batch.job.enabled: false`: Boot lanzaría el job al arrancar, sin
+    parámetros. | Reversible: sí.
+- Verificado en el código fuente de Spring Boot 4.1.1: un bean `@BatchTaskExecutor` llega al
+  `JobOperator` por `BatchJdbcAutoConfiguration.SpringBootBatchJdbcConfiguration.getTaskExecutor()`,
+  que lo pasa a `DefaultBatchConfiguration.jobOperator()` (`setTaskExecutor(getTaskExecutor())`, Spring
+  Batch 6.0.5).
+- Hallazgo: el invariante detecta un conflicto que descarta un registro distinto (falta su número: el
+  test lo prueba). No detecta, y no debe detectar, que se reprocese un número ya escrito con el mismo
+  contenido: es justo lo que la red de seguridad cubre en un reinicio (AC-04.4).
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/04-arquitectura.md` §3 y
+  `docs/05-modelo-de-datos.md` §4 (notas), que ahora nombran `ProcessedRecordWriter` y el orden
+  `sales_transaction` → `correction_log` → `quarantine_record`.
+- El PR supera las ~400 líneas fuera de tests: unas 536 de Java, de las cuales unas 130 son SQL y la
+  configuración del flujo.
+
+## Sprint 2 — Pendientes de documentación (2026-10-22)
+- Decisión del owner (2026-10-22): "Apruebo en una rama docs/pending-doc-fixes: actualizar docs/04 §3
+  por D70, quitar ⚠ y ⭐ de docs/05, docs/07, docs/10 y del CHANGELOG, y cerrar el pendiente de git
+  en lectura."
+- Hecho:
+  - `04` §3: `intakeStep` ya no marca el lote `RUNNING`. Lo hace el `JobExecutionListener` al empezar
+    cada ejecución, también en un reinicio, y guarda el `job_execution_id` (D70). Cierra el pendiente
+    de D70.
+  - Los emojis de advertencia de `05` y `10` pasan a "Atención:" y la estrella de `07` pasa a "núcleo
+    del proyecto", sin cambiar el sentido. El texto pendiente de la entrada del 2026-10-20 se reescribe
+    con palabras. Cierra el pendiente de la regla de emojis; la cita literal de la frase del owner, más
+    arriba, conserva sus caracteres.
+  - Pendiente de git en lectura (entrada del 2026-10-20), cerrado sin cambiar `09`: la fila "Git" dice
+    que el owner ejecuta los comandos de git que modifican el repo, así que leer (`status`, `diff`,
+    `log`) ya está permitido tal como está escrita.
+- Archivos protegidos modificados (con la aprobación del owner citada arriba): `docs/04-arquitectura.md`
+  §3, `docs/05-modelo-de-datos.md` §6, `docs/07-plan-de-sprints.md` (Sprint 4) y
+  `docs/10-datasets.md` §2.
+
+## Sprint 2 — Endpoint de ingesta (2026-10-22)
+- Hecho: FR-01 (AC-01.1 a AC-01.4, AC-01.6) y NFR-20. `POST /api/v1/ingestions` comprueba la extensión,
+  guarda el archivo en `inbox/{batchId}/source.csv` mientras calcula el SHA-256, rechaza un archivo
+  vacío o con solo cabecera, registra el lote en `RECEIVED` y lanza el job solo con
+  `JobOperator.start(ingestionJob, batchId + sourceChecksum)`. Responde `202` con `Location` y el cuerpo
+  de `06` B.1. Los errores salen en `problem+json` con `code` y `requestId`: `400 EMPTY_FILE`,
+  `400 MISSING_FILE`, `413 FILE_TOO_LARGE` y `415 UNSUPPORTED_MEDIA_TYPE`. Swagger UI en
+  `/swagger-ui.html`.
+- Decisiones del owner (2026-10-22):
+  - "Apruebo añadir springdoc-openapi-starter-webmvc-ui 3.1.1 como dependencia de runtime de
+    pipeline-service."
+  - "Apruebo que, hasta FR-02, POST /api/v1/ingestions responda 415 a los archivos .json." Hasta
+    entonces, el comportamiento es más estricto que AC-01.2, que acepta `.json`.
+- Decisiones:
+  - D78: el `status` del `202` es `RECEIVED` si el lote sigue en cola y `RUNNING` si el job ya arrancó,
+    aunque ya haya terminado: `06` B.1 solo admite esos dos valores, y el estado final lo da la consulta
+    del lote (FR-14). | Reversible: sí.
+  - D79: la comprobación de archivo vacío lee solo hasta el primer registro, con el lector del job. Un
+    archivo que no se puede leer (UTF-8 inválido, cabecera vacía o repetida) no es un `400`: el lote se
+    crea y el job lo deja `REJECTED` (AC-01.7, AC-01.8). | Reversible: sí.
+  - D80: el `INSERT` del lote se confirma antes de `JobOperator.start`, porque el job corre en otro
+    hilo. Endurece el código de 3c: los `UPDATE` de `IngestionBatchRepository` exigen haber actualizado
+    exactamente una fila, y si no, lanzan una excepción en lugar de dejar el lote en un estado viejo.
+    | Reversible: sí.
+  - D81: cualquier fallo después de escribir el archivo borra `inbox/{batchId}/`. Si
+    `JobOperator.start` falla, el lote pasa a `FAILED` con `INFRASTRUCTURE_ERROR` y la respuesta es
+    `500`. | Reversible: sí.
+  - D82: `X-Request-Id` solo se acepta si es un UUID; si no, se genera uno. Va al MDC (`requestId`), a la
+    cabecera de respuesta y al `problem+json`. La propagación entre servicios es del Sprint 5.
+    | Reversible: sí.
+  - D83: el `type` de cada error sigue el patrón documentado en B.1
+    (`https://pipemend.dev/problems/<code>`). Los errores propios de Spring (404, 405, tipo de contenido
+    incorrecto) conservan su estado y su cuerpo, más el `requestId`, sin inventar códigos.
+    | Reversible: sí.
+  - D84: `max-file-size` y `max-request-size` salen los dos de `PIPELINE_MAX_UPLOAD_MB`, como pide
+    AC-01.4. Un archivo de exactamente 50 MB puede rechazarse, porque la cabecera multipart también
+    cuenta. | Reversible: sí.
+  - D85: `server.tomcat.max-swallow-size: -1`. Tomcat rechaza una subida demasiado grande a partir de
+    su `Content-Length` y, con más de 2 MB sin leer, corta la conexión mientras el cliente sigue
+    enviando, así que muchos clientes no llegan a ver el `413` (lo reprodujo el test con el cliente HTTP
+    del JDK). Con `-1`, Tomcat lee y descarta el resto antes de responder. Coste: el servidor recibe la
+    subida entera aunque la rechace; aceptable en un servicio local sin autenticación (X-02).
+    | Alternativas: un tope fijo, a cambio de que las subidas mayores vuelvan a cortarse
+    | Reversible: sí | Aprobado por: owner (2026-10-22), "Confirmo D85: server.tomcat.max-swallow-size -1."
+  - D86: `source_filename` guarda solo el último segmento del nombre, sin caracteres de control y con 255
+    caracteres como máximo (se recorta por el principio y la extensión se conserva). | Reversible: sí.
+  - D87: el contenedor de test es estático y lo comparten todos los contextos. El test del endpoint
+    necesita un servidor HTTP real (MockMvc no aplica los límites de multipart) y por eso abre un segundo
+    contexto. La suite sigue arrancando un solo contenedor. | Reversible: sí.
+- TODO(owner-decision): `06` no define `code` para un `500` inesperado. Se responde `problem+json` sin
+  `code`, porque añadir uno sería un valor nuevo de contrato (`09` §2.2).
+- Pendiente para 4b (`feat/FR-04-duplicate-ingestion`):
+  - Traducir el `23505` de `uq_batch_checksum_active` a `409 DUPLICATE_INGESTION`, con
+    `existingBatchId` y `existingStatus`. Hasta entonces, un archivo duplicado devuelve `500` sin crear
+    lote ni dejar archivo. `dev` no debe pasar a `main` entre 4a y 4b.
+  - Para un lote previo `FAILED`, el `detail` dice que el lote anterior falló y que reenviarlo
+    duplicaría datos, sin nombrar ninguna ruta. Añadir la sugerencia de restart cuando llegue FR-21, o
+    documentar la limitación en el README si FR-21 se recorta.
+- Archivos protegidos modificados: ninguno. `build.gradle.kts` recibe una dependencia de runtime nueva
+  con aprobación explícita del owner; no cambia ninguna versión mayor.
+- Tamaño: unas 435 líneas fuera de tests más esta entrada, frente a las ~360 estimadas. Supera las ~400.
+
+## Sprint 2 — Ingestas duplicadas (2026-10-22)
+- Hecho: FR-04 (AC-04.2, AC-04.3, AC-04.3b y AC-04.5).
+  - Si `uq_batch_checksum_active` devuelve un `23505`, la respuesta es `409 DUPLICATE_INGESTION` con
+    `existingBatchId` y `existingStatus`. Antes no se consulta nada: insertar y traducir el error
+    impide que dos subidas simultáneas pasen las dos.
+  - Si el lote previo está `FAILED`, el `detail` dice que falló y que reenviarlo duplicaría datos, sin
+    nombrar ninguna ruta.
+  - Un lote previo `REJECTED` no bloquea: se crea uno nuevo.
+  - Dos subidas simultáneas del mismo archivo dan exactamente un `202` y un `409`.
+  - El `500` lleva ahora `code = INTERNAL_ERROR`.
+- Decisiones del owner (2026-10-22):
+  - "Confirmo D85: server.tomcat.max-swallow-size -1."
+  - "Apruebo añadir el code INTERNAL_ERROR para el 500 en docs/06 B.1 y contracts/, y anotar en
+    docs/02 AC-01.2 que .json responde 415 hasta FR-02." `contracts/` todavía no existe, así que el
+    código va solo en `06` B.1; se exportará con el contrato del Sprint 3. Cierra el
+    `TODO(owner-decision)` de la 4a.
+- Decisiones:
+  - D88: enmienda D81. Si `JobOperator.start` falla, el job no llegó a ejecutarse ni escribió nada, así
+    que se borran la fila del lote (que sigue en `RECEIVED`) y su directorio, y la respuesta es `500`.
+    Antes el lote quedaba `FAILED` y, como `uq_batch_checksum_active` solo excluye los `REJECTED`,
+    bloqueaba el checksum para siempre, sin archivo con el que reiniciarlo. Si el lote ya no está en
+    `RECEIVED`, no se borra nada. | Reversible: sí.
+  - D89: la limpieza del directorio solo cubre lo que pasa antes de que `JobOperator.start` termine
+    bien. Después, el directorio pertenece al job y no se borra nunca, aunque falle la respuesta (por
+    ejemplo, la lectura del estado). | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` B.1
+  (`500 INTERNAL_ERROR`, un cambio compatible del contrato) y `docs/02-requisitos-funcionales.md`
+  AC-01.2 (nota sobre `.json` hasta FR-02).
+- Pendiente:
+  - Añadir la sugerencia de restart al `409` de un lote `FAILED` cuando llegue FR-21, o documentar la
+    limitación en el README (`docker compose down -v`) si FR-21 se recorta (AC-04.3).
+  - Los errores propios de Spring (404, 405, tipo de contenido incorrecto) salen en `problem+json`
+    pero sin `code`. Se resuelve con FR-14 o FR-18.
+  - `dev` ya puede pasar a `main`: con esta rama, un duplicado vuelve a ser un `409`.

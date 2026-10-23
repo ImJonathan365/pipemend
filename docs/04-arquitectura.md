@@ -66,7 +66,6 @@ ingestionJob  (parámetros identificadores: batchId, sourceChecksum)
 │      • verifica que el archivo exista en /data/inbox/{batchId}/
 │      • detecta formato (CSV/JSON), lee cabeceras (quita BOM, rechaza duplicadas)
 │      • cuenta los registros con el MISMO parser del lector → ingestion_batch.read_count  [NFR-06]
-│      • marca ingestion_batch.status = RUNNING
 │
 ├── 2. schemaCheckStep       (Tasklet)                          [FR-05]
 │      • cabeceras == esperadas → mapeo identidad
@@ -80,7 +79,7 @@ ingestionJob  (parámetros identificadores: batchId, sourceChecksum)
 │                 (nunca lanza por contenido; filas malformadas se marcan;
 │                  implementa ItemStream: guarda/restaura posición para reinicio)
 │      Processor: RecordProcessor → ProcessedRecord (ver §4)
-│      Writer:    ClassifierCompositeItemWriter
+│      Writer:    ProcessedRecordWriter (orden fijo: sales_transaction → correction_log → quarantine_record)
 │                   ├─ DIRECT / AUTO_CORRECTED → SalesTransactionWriter (+ CorrectionLogWriter)
 │                   └─ QUARANTINED            → QuarantineWriter
 │      (sin skip policy; excepciones por registro → PROCESSING_ERROR)
@@ -92,7 +91,7 @@ ingestionJob  (parámetros identificadores: batchId, sourceChecksum)
 ```
 
 - El job se lanza de forma **asíncrona** con `JobOperator` sobre un `TaskExecutor` de **un solo hilo** con cola (NFR-10); el endpoint responde `202` con `status = RECEIVED` o `RUNNING`. <!-- rev: R-28 -->
-- Un `JobExecutionListener` actualiza `ingestion_batch` ante fallas (`FAILED` + `failureReason`). La correspondencia de estados Spring Batch ↔ `ingestion_batch` está en `02` §5.
+- Un `JobExecutionListener` marca el lote `RUNNING` y guarda su `job_execution_id` al empezar cada ejecución (también en un reinicio, cuando `intakeStep` ya está `COMPLETED` y no se repite; D70), y actualiza `ingestion_batch` ante fallas (`FAILED` + `failureReason`). La correspondencia de estados Spring Batch ↔ `ingestion_batch` está en `02` §5.
 - Parámetros identificadores: `batchId` y `sourceChecksum`, lo que habilita el reinicio (FR-21).
 - **Reconciliación de arranque** (AC-04.6): un `ApplicationRunner` busca lotes `RUNNING` cuya `JobExecution` quedó `STARTED`, llama a `JobOperator.recover(...)` y marca el lote `FAILED`/`INTERRUPTED`; reencola los `RECEIVED` sin ejecución. <!-- rev: R-12 -->
 

@@ -287,7 +287,7 @@ CREATE INDEX ix_ai_call_batch ON ai_call_log (batch_id, outcome);
 ```
 
 Notas de implementación:
-- El orden de escritura dentro del chunk es: `sales_transaction` → `correction_log` → `quarantine_record` (la FK compuesta exige que la fila limpia exista antes de su corrección). Con `ClassifierCompositeItemWriter`, el writer de filas limpias escribe ambas tablas en ese orden.
+- El orden de escritura dentro del chunk es: `sales_transaction` → `correction_log` → `quarantine_record` (la FK compuesta exige que la fila limpia exista antes de su corrección). `ProcessedRecordWriter` escribe siempre en ese orden, sea cual sea el orden de los registros en el chunk (`ClassifierCompositeItemWriter` no sirve: escribe en el orden en que aparece cada tipo en el chunk, D62).
 - `ck_sales_line_total` se cumple exactamente porque `quantity` es entero y `unit_price` tiene escala 2 (§3.2).
 - Un `CHECK` que falla dentro del chunk provoca rollback y `FAILED` del job: es el comportamiento deseado (un bug de validación no debe pasar en silencio). **No** se agrega una *skip policy* para "tolerarlo".
 
@@ -384,7 +384,7 @@ GROUP BY b.read_count;
 
 Resumen de métricas (base de FR-15):
 
-> ⚠️ **Trampa de JDBC + PostgreSQL** (rev: R-22): el patrón `(:batchId IS NULL OR batch_id = :batchId)` falla con `could not determine data type of parameter $1` cuando el parámetro llega como `null` sin tipo. Usar `CAST(:batchId AS uuid) IS NULL`, o construir el `WHERE` dinámicamente con parámetros. Los filtros `from`/`to` se aplican sobre `ingestion_batch.received_at` y las demás tablas se unen por `batch_id` (AC-15.2); las consultas de abajo muestran solo el filtro por lote por brevedad.
+> **Atención: trampa de JDBC + PostgreSQL** (rev: R-22): el patrón `(:batchId IS NULL OR batch_id = :batchId)` falla con `could not determine data type of parameter $1` cuando el parámetro llega como `null` sin tipo. Usar `CAST(:batchId AS uuid) IS NULL`, o construir el `WHERE` dinámicamente con parámetros. Los filtros `from`/`to` se aplican sobre `ingestion_batch.received_at` y las demás tablas se unen por `batch_id` (AC-15.2); las consultas de abajo muestran solo el filtro por lote por brevedad.
 
 ```sql
 SELECT load_origin, count(*) FROM sales_transaction WHERE (CAST(:batchId AS uuid) IS NULL OR batch_id = :batchId) GROUP BY load_origin;

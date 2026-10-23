@@ -170,11 +170,14 @@ Formato de cada entrada de "Decisiones" en un PR:
 
 | Tema | Convención |
 |---|---|
-| Idioma | Código, identificadores, commits, logs y mensajes de error de API en **inglés**. Documentación de `/docs` en **español**. Explicaciones de la IA según `AI_EXPLANATION_LANGUAGE` |
+| Idioma | Código, identificadores, comentarios de código, commits, PRs, logs, mensajes de error de API y README raíz en **inglés**. Documentación de `/docs` en **español**. Las respuestas del agente al owner, en **español**. Explicaciones de la IA según `AI_EXPLANATION_LANGUAGE`: es el idioma de las explicaciones que el LLM genera en runtime, no el del agente |
+| Comentarios | Escasos y puntuales: solo explican un *por qué* que no se deduce del código (una trampa de versión, una regla de `/docs`, una decisión no obvia). No narran lo que el código ya dice |
+| Emojis | Ninguno en código, comentarios, commits ni mensajes. Única excepción: los marcadores 🔴/🟠/🟢 de §2.1 cuando clasifican archivos, en `/docs`, en planes y en la sección "Archivos protegidos modificados" del PR |
 | Commits | Conventional Commits con scope: `feat(pipeline): ...`, `fix(ai): ...`, `docs: ...`, `test(pipeline): ...`, `chore(infra): ...`. Incluir IDs: `feat(pipeline): add correction policy (FR-09)` |
 | Ramas | `feat/FR-09-correction-policy`, `fix/...`, `docs/...`, `adr/NNNN-...` |
 | PRs | Pequeños (idealmente < 400 líneas cambiadas sin contar tests/fixtures), **un FR por PR**. Descripción con: requisitos y AC cubiertos, cómo probar, comandos ejecutados y resultado, "Decisiones" (§5.1), "Archivos protegidos modificados" (si hay), `TODO(owner-decision)` pendientes |
-| Git | Un agente **no** hace push directo a `main`, no hace `force push` a ramas compartidas, no reescribe historia publicada, no crea tags de versión (`v0.n` los crea el owner) y no fusiona su propio PR sin aprobación |
+| Git | Un agente **no** hace push directo a `main`, no hace `force push` a ramas compartidas, no reescribe historia publicada, no crea tags de versión (`v0.n` los crea el owner) y no fusiona su propio PR sin aprobación. El owner ejecuta los comandos de git que modifican el repo; el agente se los entrega listos para pegar. Las ramas salen de `dev` y los PRs van contra `dev`; el owner fusiona `dev` → `main`. Commits y PRs no llevan líneas de atribución ni `Co-Authored-By` |
+| CI | Tras cada push o merge a `dev` que el owner notifique, o ante un fallo, el agente revisa la CI con `gh` solo en lectura (`gh run list`, `gh run view --log-failed`, `gh pr checks`). Nunca usa un comando de `gh` que escriba en GitHub (merge, create, comment, rerun, workflow run) sin petición explícita del owner. Un fallo se arregla en una rama `fix/...` que sale de `dev`, tras ejecutar en local el comando del job; nunca quitando pasos, con `continue-on-error` ni bajando umbrales (§2.1) |
 | Alcance del diff | Sin reformateos masivos ni cambios "de paso" en archivos no relacionados con el FR |
 | Nombres | Paquete base Java `com.pipemend.pipeline`; módulo Python `app`. Enums y códigos exactamente como en `02` y `06` |
 | Tests | Todo AC implementado tiene test. Tests de integración con Testcontainers y WireMock; nunca contra servicios reales ni con red externa |
