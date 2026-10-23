@@ -14,6 +14,10 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
@@ -158,19 +162,80 @@ class IngestionEndpointTest {
     }
 
     @Test
-    void aDuplicateCreatesNoBatchAndLeavesNoFile() throws Exception {
+    void ac_04_2_aDuplicateOfAnActiveBatchIsAConflictThatCreatesNothing() throws Exception {
         byte[] content = csv(1);
-        awaitEnd(UUID.fromString(
-                (String) upload("first.csv", content, null).json().get("batchId")));
+        UUID first = UUID.fromString(
+                (String) upload("first.csv", content, null).json().get("batchId"));
+        awaitEnd(first);
         long batches = batchCount();
         long directories = inboxEntries();
 
         Reply duplicate = upload("again.csv", content, null);
 
-        // Until FR-04 (branch 4b) the unique checksum index surfaces as a 500; 4b turns it into a 409.
-        assertThat(duplicate.status()).isEqualTo(500);
+        assertProblem(duplicate, 409, "DUPLICATE_INGESTION");
+        assertThat(duplicate.json())
+                .containsEntry("type", "https://pipemend.dev/problems/duplicate-ingestion")
+                .containsEntry("existingBatchId", first.toString())
+                .containsEntry("existingStatus", "COMPLETED");
         assertThat(batchCount()).isEqualTo(batches);
         assertThat(inboxEntries()).isEqualTo(directories);
+    }
+
+    @Test
+    void ac_04_3_aDuplicateOfAFailedBatchExplainsWhyWithoutNamingARoute() throws Exception {
+        byte[] content = csv(1);
+        UUID failed = insertBatch(content, "FAILED");
+
+        Reply duplicate = upload("again.csv", content, null);
+
+        assertProblem(duplicate, 409, "DUPLICATE_INGESTION");
+        assertThat(duplicate.json())
+                .containsEntry("existingBatchId", failed.toString())
+                .containsEntry("existingStatus", "FAILED");
+        assertThat((String) duplicate.json().get("detail"))
+                .contains("failed", "duplicate data")
+                .doesNotContain("/");
+    }
+
+    @Test
+    void ac_04_3b_aFileWhoseOnlyBatchWasRejectedIsAcceptedAsANewBatch() throws Exception {
+        byte[] content = csv(1);
+        UUID rejected = insertBatch(content, "REJECTED");
+
+        Reply reply = upload("again.csv", content, null);
+
+        assertThat(reply.status()).isEqualTo(202);
+        UUID batchId = UUID.fromString((String) reply.json().get("batchId"));
+        assertThat(batchId).isNotEqualTo(rejected);
+        awaitEnd(batchId);
+    }
+
+    @Test
+    void ac_04_5_twoConcurrentUploadsOfTheSameFileGiveExactlyOneBatch() throws Exception {
+        byte[] content = csv(50);
+        CountDownLatch go = new CountDownLatch(1);
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            List<Future<Reply>> replies = List.of(
+                    pool.submit(() -> {
+                        go.await();
+                        return upload("a.csv", content, null);
+                    }),
+                    pool.submit(() -> {
+                        go.await();
+                        return upload("b.csv", content, null);
+                    }));
+            go.countDown();
+
+            List<Reply> done = List.of(replies.get(0).get(), replies.get(1).get());
+            assertThat(done).extracting(Reply::status).containsExactlyInAnyOrder(202, 409);
+            Reply accepted =
+                    done.stream().filter(r -> r.status() == 202).findFirst().orElseThrow();
+            Reply conflict =
+                    done.stream().filter(r -> r.status() == 409).findFirst().orElseThrow();
+            assertThat(conflict.json())
+                    .containsEntry("existingBatchId", accepted.json().get("batchId"));
+            awaitEnd(UUID.fromString((String) accepted.json().get("batchId")));
+        }
     }
 
     @Test
@@ -235,6 +300,21 @@ class IngestionEndpointTest {
                 .param("id", batchId)
                 .query()
                 .singleRow();
+    }
+
+    private UUID insertBatch(byte[] content, String status) throws Exception {
+        UUID id = UUID.randomUUID();
+        jdbc.sql("""
+                        INSERT INTO ingestion_batch (id, source_filename, source_type, source_checksum,
+                            source_size_bytes, schema_name, schema_version, status)
+                        VALUES (:id, 'old.csv', 'CSV', :checksum, :size, 'sales_transaction', '1', :status)
+                        """)
+                .param("id", id)
+                .param("checksum", sha256(content))
+                .param("size", content.length)
+                .param("status", status)
+                .update();
+        return id;
     }
 
     private long batchCount() {

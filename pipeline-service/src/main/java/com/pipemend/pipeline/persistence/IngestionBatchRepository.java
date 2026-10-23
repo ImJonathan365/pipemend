@@ -3,6 +3,7 @@ package com.pipemend.pipeline.persistence;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -123,6 +124,23 @@ public class IngestionBatchRepository {
         return receivedAt;
     }
 
+    /** The batch that holds a checksum: any batch not REJECTED (uq_batch_checksum_active, ADR-0009). */
+    public Optional<ActiveBatch> findActiveByChecksum(String checksum) {
+        return jdbc.sql(
+                        "SELECT id, status FROM ingestion_batch WHERE source_checksum = :checksum AND status <> 'REJECTED'")
+                .param("checksum", checksum)
+                .query((rs, row) -> new ActiveBatch(rs.getObject("id", UUID.class), rs.getString("status")))
+                .optional();
+    }
+
+    /** Removes a batch whose job never started, freeing its checksum; false if it already left RECEIVED. */
+    public boolean deleteIfReceived(UUID batchId) {
+        return jdbc.sql("DELETE FROM ingestion_batch WHERE id = :id AND status = 'RECEIVED'")
+                        .param("id", batchId)
+                        .update()
+                == 1;
+    }
+
     public String status(UUID batchId) {
         return jdbc.sql("SELECT status FROM ingestion_batch WHERE id = :id")
                 .param("id", batchId)
@@ -172,6 +190,8 @@ public class IngestionBatchRepository {
     private OffsetDateTime now() {
         return OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
     }
+
+    public record ActiveBatch(UUID id, String status) {}
 
     public record Counts(
             int read, int direct, int autoCorrected, int quarantined, int inBoth, int distinctRows, int maxRow) {

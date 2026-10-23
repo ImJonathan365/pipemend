@@ -1,5 +1,6 @@
 package com.pipemend.pipeline.common;
 
+import com.pipemend.pipeline.ingestion.DuplicateIngestionException;
 import com.pipemend.pipeline.ingestion.EmptyFileException;
 import com.pipemend.pipeline.ingestion.UnsupportedFileTypeException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,6 +30,15 @@ public class ApiExceptionHandler {
                 HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE", "Unsupported media type", e, request);
     }
 
+    @ExceptionHandler(DuplicateIngestionException.class)
+    ResponseEntity<ProblemDetail> duplicate(DuplicateIngestionException e, HttpServletRequest request) {
+        ProblemDetail problem =
+                problem(HttpStatus.CONFLICT, "DUPLICATE_INGESTION", "Duplicate ingestion", e.getMessage(), request);
+        problem.setProperty("existingBatchId", e.existingBatchId());
+        problem.setProperty("existingStatus", e.existingStatus());
+        return respond(problem);
+    }
+
     @ExceptionHandler(EmptyFileException.class)
     ResponseEntity<ProblemDetail> empty(EmptyFileException e, HttpServletRequest request) {
         return problem(HttpStatus.BAD_REQUEST, "EMPTY_FILE", "Empty file", e, request);
@@ -54,26 +64,30 @@ public class ApiExceptionHandler {
             return respond(problem);
         }
         log.error("Unexpected error on {}", request.getRequestURI(), e);
-        // TODO(owner-decision): docs/06 defines no code for an unexpected 500 — chose to send none because a new
-        // code is a new contract value (docs/09 section 2.2).
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR, "The request could not be completed.");
-        problem.setTitle("Internal error");
-        problem.setInstance(URI.create(request.getRequestURI()));
-        problem.setProperty("requestId", request.getAttribute(RequestIdFilter.ATTRIBUTE));
+        ProblemDetail problem = problem(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "Internal error",
+                "The request could not be completed.",
+                request);
         return respond(problem);
     }
 
     private static ResponseEntity<ProblemDetail> problem(
             HttpStatus status, String code, String title, Exception e, HttpServletRequest request) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail(e));
+        return respond(problem(status, code, title, detail(e), request));
+    }
+
+    private static ProblemDetail problem(
+            HttpStatus status, String code, String title, String detail, HttpServletRequest request) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(URI.create(
                 "https://pipemend.dev/problems/" + code.toLowerCase(Locale.ROOT).replace('_', '-')));
         problem.setTitle(title);
         problem.setInstance(URI.create(request.getRequestURI()));
         problem.setProperty("code", code);
         problem.setProperty("requestId", request.getAttribute(RequestIdFilter.ATTRIBUTE));
-        return respond(problem);
+        return problem;
     }
 
     private static String detail(Exception e) {
