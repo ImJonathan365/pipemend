@@ -687,3 +687,39 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Los errores propios de Spring (404, 405, tipo de contenido incorrecto) salen en `problem+json`
     pero sin `code`. Se resuelve con FR-14 o FR-18.
   - `dev` ya puede pasar a `main`: con esta rama, un duplicado vuelve a ser un `409`.
+
+## Sprint 2 — Reconciliación de arranque (2026-10-22)
+- Hecho: FR-04 (AC-04.6). Al arrancar, `pipeline-service` pasa por `JobOperator.recover(...)` cada
+  ejecución de `ingestionJob` que quedó `STARTING`, `STARTED` o `STOPPING`. Las busca con
+  `JobRepository.findRunningJobExecutions`, sin SQL sobre las tablas `BATCH_*`. Después:
+  - un lote `RUNNING` pasa a `FAILED` con `INTERRUPTED`, y su archivo se queda en el inbox para FR-21;
+  - un lote `RECEIVED` (en cola) se reencola con `JobOperator.restart(...)`;
+  - un lote `RECEIVED` sin ejecución se lanza con `JobOperator.start(...)` (AC-04.6 y ADR-0009 §4);
+  - un lote en un estado final no se toca: solo se recupera su ejecución.
+  - Test con un apagado real: el estado se siembra en PostgreSQL con los repositorios y después arranca
+    un segundo contexto Spring contra la misma BD y el mismo inbox, sin mocks. Un tercer arranque no
+    cambia nada.
+- Decisión del owner (2026-10-22): "Apruebo que la reconciliación de AC-04.6 corra antes de arrancar
+  el servidor web, que los lotes RECEIVED con ejecución en STARTING se recuperen y se reencolen con
+  JobOperator.restart, y actualizar docs/04 §3 y la tabla de docs/02 §5."
+- Decisiones:
+  - D90: un lote `RECEIVED` con una ejecución en curso no ha ejecutado ningún step, porque
+    `markRunning` está en `beforeJob` y los steps corren después (`AbstractJob.execute`, 6.0.5). Por
+    eso se reencola en vez de quedar `FAILED`, que bloquearía su checksum. Incluye la ejecución en
+    `STARTED`: `AbstractJob` la pone en `STARTED` antes de llamar a `beforeJob`. El restart vuelve a
+    empezar en `intakeStep`, porque `SimpleStepHandler.shouldStart` ejecuta todo step sin una
+    `StepExecution` previa. | Reversible: sí.
+  - D91: la reconciliación es un `SmartLifecycle` de fase 0, no un `ApplicationRunner` ni un
+    `SmartInitializingSingleton`. Corre antes del servidor web (fase `Integer.MAX_VALUE - 2048`) y
+    después de que `MapJobRegistry` registre los jobs en `afterSingletonsInstantiated`, que es lo que
+    necesita `restart`. | Reversible: sí.
+  - D92: si la reconciliación falla, el arranque falla. Seguir arrancando junto a lotes en un estado
+    desconocido sería un "catch que tiene éxito". | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/04-arquitectura.md` §3
+  (la reconciliación) y `docs/02-requisitos-funcionales.md` §5 (la fila `RECEIVED` de la tabla).
+- Pendiente:
+  - FR-21: rechazar el restart de un lote `COMPLETED` aunque su ejecución figure `FAILED`. Ocurre si
+    el proceso muere entre `afterJob` y el guardado final de Spring Batch (caso D).
+  - Los contextos de test comparten la BD, así que cada contexto nuevo también reconcilia lo que
+    dejaron otras clases de test. Ningún test lo comprueba hoy, pero conviene saberlo si aparece un
+    test inestable.

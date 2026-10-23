@@ -15,6 +15,8 @@ import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.StepExecution;
@@ -41,6 +43,14 @@ public class IngestionJobConfiguration {
     public static final String BATCH_ID = "batchId";
     public static final String SOURCE_CHECKSUM = "sourceChecksum";
     static final ExitStatus REJECTED = new ExitStatus("REJECTED");
+
+    /** Both identifying, so a batch is one job instance and FR-21 can restart it. */
+    public static JobParameters parameters(UUID batchId, String sourceChecksum) {
+        return new JobParametersBuilder()
+                .addString(BATCH_ID, batchId.toString())
+                .addString(SOURCE_CHECKSUM, sourceChecksum)
+                .toJobParameters();
+    }
 
     static UUID batchId(JobExecution execution) {
         return UUID.fromString(execution.getJobParameters().getString(BATCH_ID));
