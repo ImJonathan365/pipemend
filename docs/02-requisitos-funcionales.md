@@ -148,7 +148,7 @@ Salvo `TRIM`, todos los verificadores operan sobre `s = strip(original)` (defini
 
 | Situación | `BatchStatus` de Spring Batch | `ExitStatus` | `ingestion_batch.status` |
 |---|---|---|---|
-| Registrado, el job aún no arranca (cola) | — (sin `JobExecution`) | — | `RECEIVED` |
+| Registrado, el job aún no arranca (cola) | — (sin `JobExecution`) o `STARTING`/`STARTED` antes de `beforeJob` (ningún step ejecutado) | — | `RECEIVED` |
 | Job en curso | `STARTED` | `EXECUTING` | `RUNNING` |
 | Drift no resuelto / formato inválido | `COMPLETED` (el flujo termina a propósito) | `REJECTED` (custom) | `REJECTED` |
 | Terminó y el invariante se cumple | `COMPLETED` | `COMPLETED` | `COMPLETED` |
