@@ -634,7 +634,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     del JDK). Con `-1`, Tomcat lee y descarta el resto antes de responder. Coste: el servidor recibe la
     subida entera aunque la rechace; aceptable en un servicio local sin autenticación (X-02).
     | Alternativas: un tope fijo, a cambio de que las subidas mayores vuelvan a cortarse
-    | Reversible: sí | Pendiente de confirmación del owner.
+    | Reversible: sí | Aprobado por: owner (2026-10-22), "Confirmo D85: server.tomcat.max-swallow-size -1."
   - D86: `source_filename` guarda solo el último segmento del nombre, sin caracteres de control y con 255
     caracteres como máximo (se recorta por el principio y la extensión se conserva). | Reversible: sí.
   - D87: el contenedor de test es estático y lo comparten todos los contextos. El test del endpoint
@@ -652,3 +652,38 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados: ninguno. `build.gradle.kts` recibe una dependencia de runtime nueva
   con aprobación explícita del owner; no cambia ninguna versión mayor.
 - Tamaño: unas 435 líneas fuera de tests más esta entrada, frente a las ~360 estimadas. Supera las ~400.
+
+## Sprint 2 — Ingestas duplicadas (2026-10-22)
+- Hecho: FR-04 (AC-04.2, AC-04.3, AC-04.3b y AC-04.5).
+  - Si `uq_batch_checksum_active` devuelve un `23505`, la respuesta es `409 DUPLICATE_INGESTION` con
+    `existingBatchId` y `existingStatus`. Antes no se consulta nada: insertar y traducir el error
+    impide que dos subidas simultáneas pasen las dos.
+  - Si el lote previo está `FAILED`, el `detail` dice que falló y que reenviarlo duplicaría datos, sin
+    nombrar ninguna ruta.
+  - Un lote previo `REJECTED` no bloquea: se crea uno nuevo.
+  - Dos subidas simultáneas del mismo archivo dan exactamente un `202` y un `409`.
+  - El `500` lleva ahora `code = INTERNAL_ERROR`.
+- Decisiones del owner (2026-10-22):
+  - "Confirmo D85: server.tomcat.max-swallow-size -1."
+  - "Apruebo añadir el code INTERNAL_ERROR para el 500 en docs/06 B.1 y contracts/, y anotar en
+    docs/02 AC-01.2 que .json responde 415 hasta FR-02." `contracts/` todavía no existe, así que el
+    código va solo en `06` B.1; se exportará con el contrato del Sprint 3. Cierra el
+    `TODO(owner-decision)` de la 4a.
+- Decisiones:
+  - D88: enmienda D81. Si `JobOperator.start` falla, el job no llegó a ejecutarse ni escribió nada, así
+    que se borran la fila del lote (que sigue en `RECEIVED`) y su directorio, y la respuesta es `500`.
+    Antes el lote quedaba `FAILED` y, como `uq_batch_checksum_active` solo excluye los `REJECTED`,
+    bloqueaba el checksum para siempre, sin archivo con el que reiniciarlo. Si el lote ya no está en
+    `RECEIVED`, no se borra nada. | Reversible: sí.
+  - D89: la limpieza del directorio solo cubre lo que pasa antes de que `JobOperator.start` termine
+    bien. Después, el directorio pertenece al job y no se borra nunca, aunque falle la respuesta (por
+    ejemplo, la lectura del estado). | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` B.1
+  (`500 INTERNAL_ERROR`, un cambio compatible del contrato) y `docs/02-requisitos-funcionales.md`
+  AC-01.2 (nota sobre `.json` hasta FR-02).
+- Pendiente:
+  - Añadir la sugerencia de restart al `409` de un lote `FAILED` cuando llegue FR-21, o documentar la
+    limitación en el README (`docker compose down -v`) si FR-21 se recorta (AC-04.3).
+  - Los errores propios de Spring (404, 405, tipo de contenido incorrecto) salen en `problem+json`
+    pero sin `code`. Se resuelve con FR-14 o FR-18.
+  - `dev` ya puede pasar a `main`: con esta rama, un duplicado vuelve a ser un `409`.

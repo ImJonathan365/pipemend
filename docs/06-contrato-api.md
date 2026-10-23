@@ -410,7 +410,7 @@ curl -F "file=@data/samples/dirty-1k.csv" http://localhost:8080/api/v1/ingestion
 }
 ```
 
-Otros errores: `400 EMPTY_FILE`, `400 MISSING_FILE`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+Otros errores: `400 EMPTY_FILE`, `400 MISSING_FILE`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `500 INTERNAL_ERROR` (error inesperado; el `detail` nunca describe la causa interna).
 
 - `status` en la respuesta `202` es `RECEIVED` si hay otro lote en curso (cola de un solo hilo, NFR-10) o `RUNNING` si el job ya arrancó. <!-- rev: R-28 -->
 - `409` se devuelve para cualquier lote previo con el mismo checksum en estado distinto de `REJECTED` (AC-04.2); `existingStatus` indica cuál. Si el lote previo está `REJECTED`, se crea uno nuevo (AC-04.3b). <!-- rev: R-12 -->
