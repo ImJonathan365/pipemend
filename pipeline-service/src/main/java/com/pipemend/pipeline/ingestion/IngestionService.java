@@ -20,7 +20,6 @@ import java.util.Locale;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.batch.core.job.Job;
-import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.core.io.InputStreamSource;
@@ -107,12 +106,7 @@ public class IngestionService {
      */
     private void launch(UUID batchId, String checksum, Path directory) throws IOException {
         try {
-            jobOperator.start(
-                    ingestionJob,
-                    new JobParametersBuilder()
-                            .addString(IngestionJobConfiguration.BATCH_ID, batchId.toString())
-                            .addString(IngestionJobConfiguration.SOURCE_CHECKSUM, checksum)
-                            .toJobParameters());
+            jobOperator.start(ingestionJob, IngestionJobConfiguration.parameters(batchId, checksum));
         } catch (Exception e) {
             if (batches.deleteIfReceived(batchId)) {
                 FileSystemUtils.deleteRecursively(directory);

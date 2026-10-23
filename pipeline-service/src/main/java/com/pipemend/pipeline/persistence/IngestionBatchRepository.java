@@ -3,6 +3,7 @@ package com.pipemend.pipeline.persistence;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -141,11 +142,30 @@ public class IngestionBatchRepository {
                 == 1;
     }
 
+    /** Fails a batch left RUNNING by a stopped process (AC-04.6); false if it already reached another status. */
+    public boolean interrupt(UUID batchId) {
+        return jdbc.sql("""
+                                UPDATE ingestion_batch SET status = 'FAILED', failure_reason = 'INTERRUPTED',
+                                    finished_at = :now
+                                WHERE id = :id AND status = 'RUNNING'
+                                """).param("id", batchId).param("now", now()).update() == 1;
+    }
+
+    public List<ReceivedBatch> findReceived() {
+        return jdbc.sql("SELECT id, source_checksum FROM ingestion_batch WHERE status = 'RECEIVED'")
+                .query((rs, row) -> new ReceivedBatch(rs.getObject("id", UUID.class), rs.getString("source_checksum")))
+                .list();
+    }
+
     public String status(UUID batchId) {
+        return findStatus(batchId).orElseThrow();
+    }
+
+    public Optional<String> findStatus(UUID batchId) {
         return jdbc.sql("SELECT status FROM ingestion_batch WHERE id = :id")
                 .param("id", batchId)
                 .query(String.class)
-                .single();
+                .optional();
     }
 
     /** Counts read from the tables, never from the step (NFR-06, docs/05 section 6). */
@@ -192,6 +212,8 @@ public class IngestionBatchRepository {
     }
 
     public record ActiveBatch(UUID id, String status) {}
+
+    public record ReceivedBatch(UUID id, String checksum) {}
 
     public record Counts(
             int read, int direct, int autoCorrected, int quarantined, int inBoth, int distinctRows, int maxRow) {
