@@ -5,6 +5,7 @@ import com.pipemend.pipeline.batch.IngestionJobConfiguration;
 import com.pipemend.pipeline.batch.InvalidFileFormatException;
 import com.pipemend.pipeline.batch.RawRecordReader;
 import com.pipemend.pipeline.persistence.IngestionBatchRepository;
+import com.pipemend.pipeline.persistence.IngestionBatchRepository.ActiveBatch;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,12 +24,13 @@ import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.core.io.InputStreamSource;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
 
 /**
- * Receives a file (FR-01): stores it in the inbox while hashing it, registers the batch and launches the job. Every
- * failure after the file is written removes its directory, so the inbox never keeps a file without a live batch.
+ * Receives a file (FR-01): stores it in the inbox while hashing it, registers the batch and launches the job. Until
+ * the launch succeeds, any failure removes the batch directory, so the inbox never keeps a file without a live batch.
  */
 @Service
 public class IngestionService {
@@ -63,6 +65,8 @@ public class IngestionService {
         String filename = sanitize(originalFilename);
         UUID batchId = UUID.randomUUID();
         Path directory = inbox.directory(batchId);
+        String checksum;
+        OffsetDateTime receivedAt;
         try {
             Files.createDirectories(directory);
             Path source = directory.resolve(Inbox.SOURCE_FILE);
@@ -74,20 +78,34 @@ public class IngestionService {
             if (size == 0 || hasNoRecords(batchId)) {
                 throw new EmptyFileException();
             }
-            String checksum = HexFormat.of().formatHex(sha256.digest());
+            checksum = HexFormat.of().formatHex(sha256.digest());
             // Committed before the launch: the job runs on another thread and must find the row.
-            OffsetDateTime receivedAt =
-                    batches.insert(batchId, filename, checksum, size, schema.name(), schema.version());
-            launch(batchId, checksum);
-            String status = "RECEIVED".equals(batches.status(batchId)) ? "RECEIVED" : "RUNNING";
-            return new IngestionResponse(batchId, status, filename, "CSV", checksum, receivedAt);
+            receivedAt = insert(batchId, filename, checksum, size);
         } catch (IOException | RuntimeException e) {
             FileSystemUtils.deleteRecursively(directory);
             throw e;
         }
+        launch(batchId, checksum, directory);
+        // From here the directory belongs to the running job and is never removed.
+        String status = "RECEIVED".equals(batches.status(batchId)) ? "RECEIVED" : "RUNNING";
+        return new IngestionResponse(batchId, status, filename, "CSV", checksum, receivedAt);
     }
 
-    private void launch(UUID batchId, String checksum) {
+    /** Insert, then translate the unique index (AC-04.5): checking first would let two concurrent uploads pass. */
+    private OffsetDateTime insert(UUID batchId, String filename, String checksum, long size) {
+        try {
+            return batches.insert(batchId, filename, checksum, size, schema.name(), schema.version());
+        } catch (DuplicateKeyException e) {
+            ActiveBatch existing = batches.findActiveByChecksum(checksum).orElseThrow(() -> e);
+            throw new DuplicateIngestionException(existing.id(), existing.status());
+        }
+    }
+
+    /**
+     * A job that could not be launched never ran and wrote nothing, so the batch and its file are removed and the
+     * checksum stays free for a new upload (D88).
+     */
+    private void launch(UUID batchId, String checksum, Path directory) throws IOException {
         try {
             jobOperator.start(
                     ingestionJob,
@@ -96,7 +114,9 @@ public class IngestionService {
                             .addString(IngestionJobConfiguration.SOURCE_CHECKSUM, checksum)
                             .toJobParameters());
         } catch (Exception e) {
-            batches.fail(batchId, "INFRASTRUCTURE_ERROR");
+            if (batches.deleteIfReceived(batchId)) {
+                FileSystemUtils.deleteRecursively(directory);
+            }
             throw new IllegalStateException("cannot launch the ingestion job for batch " + batchId, e);
         }
     }
