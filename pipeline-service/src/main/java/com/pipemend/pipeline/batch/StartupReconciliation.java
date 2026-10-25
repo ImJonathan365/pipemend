@@ -5,6 +5,7 @@ import com.pipemend.pipeline.persistence.IngestionBatchRepository.ReceivedBatch;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.batch.core.job.Job;
@@ -49,12 +50,7 @@ public class StartupReconciliation implements SmartLifecycle {
 
     @Override
     public void start() {
-        try {
-            reconcile();
-        } catch (Exception e) {
-            // Failing the startup is safer than serving uploads next to batches in an unknown state.
-            throw new IllegalStateException("startup reconciliation failed", e);
-        }
+        reconcile();
         running = true;
     }
 
@@ -68,27 +64,69 @@ public class StartupReconciliation implements SmartLifecycle {
         return running;
     }
 
-    void reconcile() throws Exception {
+    /**
+     * Only the two initial queries stop the startup, since they mean the database is down. A batch that cannot be
+     * reconciled becomes FAILED with INFRASTRUCTURE_ERROR so that one batch cannot block every startup (D93).
+     */
+    void reconcile() {
         Set<UUID> withExecution = new HashSet<>();
         for (JobExecution execution : jobRepository.findRunningJobExecutions(IngestionJobConfiguration.JOB_NAME)) {
-            UUID batchId = IngestionJobConfiguration.batchId(execution);
-            withExecution.add(batchId);
-            JobExecution recovered = jobOperator.recover(execution);
-            String status = batches.findStatus(batchId).orElse("");
-            if (status.equals("RECEIVED")) {
-                // markRunning happens in beforeJob, before any step, so a RECEIVED batch has nothing to duplicate.
-                log.info("Batch {} was queued when the service stopped; queuing it again", batchId);
-                jobOperator.restart(recovered);
-            } else if (batches.interrupt(batchId)) {
-                log.warn("Batch {} was interrupted while running and is now FAILED (INTERRUPTED)", batchId);
+            UUID batchId = readBatchId(execution);
+            if (batchId != null) {
+                withExecution.add(batchId);
+            }
+            try {
+                // recover needs no batch: nothing runs at startup, so the execution cannot be alive.
+                JobExecution recovered = jobOperator.recover(execution);
+                if (batchId == null) {
+                    log.error(
+                            "Execution {} has no readable batchId; recovered it with no batch to mark",
+                            execution.getId());
+                    continue;
+                }
+                String status = batches.findStatus(batchId).orElse(null);
+                if (status == null) {
+                    log.error(
+                            "Execution {} belongs to batch {}, which has no row; recovered it",
+                            execution.getId(),
+                            batchId);
+                } else if (status.equals("RECEIVED")) {
+                    // markRunning happens in beforeJob, before any step, so a RECEIVED batch has nothing to duplicate.
+                    log.info("Batch {} was queued when the service stopped; queuing it again", batchId);
+                    jobOperator.restart(recovered);
+                } else if (batches.interrupt(batchId)) {
+                    log.warn("Batch {} was interrupted while running and is now FAILED (INTERRUPTED)", batchId);
+                }
+            } catch (Exception e) {
+                failBatch(batchId, "cannot reconcile execution " + execution.getId(), e);
             }
         }
         for (ReceivedBatch batch : batches.findReceived()) {
             if (!withExecution.contains(batch.id())) {
                 log.info("Batch {} was registered but never launched; launching it", batch.id());
-                jobOperator.start(ingestionJob, IngestionJobConfiguration.parameters(batch.id(), batch.checksum()));
+                try {
+                    jobOperator.start(ingestionJob, IngestionJobConfiguration.parameters(batch.id(), batch.checksum()));
+                } catch (Exception e) {
+                    failBatch(batch.id(), "cannot launch the batch", e);
+                }
             }
         }
         log.info("Startup reconciliation finished");
+    }
+
+    // The batch stays FAILED and visible, and the cause is logged: not an error turned into a success.
+    private void failBatch(@Nullable UUID batchId, String what, Exception cause) {
+        log.error("Startup reconciliation of batch {}: {}", batchId, what, cause);
+        if (batchId != null && batches.failUnfinished(batchId, "INFRASTRUCTURE_ERROR")) {
+            log.error("Batch {} is now FAILED (INFRASTRUCTURE_ERROR)", batchId);
+        }
+    }
+
+    private static @Nullable UUID readBatchId(JobExecution execution) {
+        try {
+            return IngestionJobConfiguration.batchId(execution);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 }

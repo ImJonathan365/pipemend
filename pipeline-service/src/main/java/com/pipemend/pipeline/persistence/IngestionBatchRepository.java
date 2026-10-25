@@ -151,6 +151,19 @@ public class IngestionBatchRepository {
                                 """).param("id", batchId).param("now", now()).update() == 1;
     }
 
+    /** Fails a batch that has not finished; false if it already reached a final status or has no row. */
+    public boolean failUnfinished(UUID batchId, String failureReason) {
+        return jdbc.sql("""
+                                UPDATE ingestion_batch SET status = 'FAILED', failure_reason = :reason, finished_at = :now
+                                WHERE id = :id AND status IN ('RECEIVED', 'RUNNING')
+                                """)
+                        .param("id", batchId)
+                        .param("reason", failureReason)
+                        .param("now", now())
+                        .update()
+                == 1;
+    }
+
     public List<ReceivedBatch> findReceived() {
         return jdbc.sql("SELECT id, source_checksum FROM ingestion_batch WHERE status = 'RECEIVED'")
                 .query((rs, row) -> new ReceivedBatch(rs.getObject("id", UUID.class), rs.getString("source_checksum")))
