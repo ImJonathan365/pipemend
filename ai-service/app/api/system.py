@@ -1,21 +1,14 @@
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.domain.contracts import ContractModel
 
 router = APIRouter(tags=["system"])
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-
-
-class ContractModel(BaseModel):
-    """Base for anything on the wire: docs/06 fixes camelCase for every JSON field."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class HealthResponse(ContractModel):
