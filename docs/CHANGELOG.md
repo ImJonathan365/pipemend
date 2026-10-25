@@ -723,3 +723,29 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Los contextos de test comparten la BD, así que cada contexto nuevo también reconcilia lo que
     dejaron otras clases de test. Ningún test lo comprueba hoy, pero conviene saberlo si aparece un
     test inestable.
+
+## Sprint 2 — Aislamiento por lote en la reconciliación de arranque (2026-10-24)
+- Hecho: FR-04 (AC-04.6). Un lote que la reconciliación no puede reconciliar ya no detiene el
+  arranque.
+  - Si su `recover`, `restart` o `start` lanza, se registra un `log.error` y el lote pasa a
+    `FAILED` con `INFRASTRUCTURE_ERROR`. Ese UPDATE solo actúa desde `RECEIVED` o `RUNNING`, así que
+    nunca pisa un estado final. Luego sigue con el siguiente lote.
+  - Una ejecución cuyo `batchId` no se puede leer, o cuyo lote no tiene fila, se recupera igualmente
+    con `recover` y deja un `log.error`. No hay lote que marcar.
+  - Solo detiene el arranque un fallo de las consultas iniciales (`findRunningJobExecutions`,
+    `findReceived`) o del propio UPDATE: los tres significan que la BD no está disponible.
+  - Test con los rechazos reales de Spring Batch (`JobInstanceAlreadyCompleteException` en el
+    restart y en el start), una ejecución sin fila, otra con un `batchId` ilegible y un lote normal
+    que termina `COMPLETED`. Sin mocks del `JobOperator`.
+- Decisión del owner (2026-10-24): "Apruebo que la reconciliación de arranque aísle cada lote: si su
+  recover, restart o start falla, el lote queda FAILED con INFRASTRUCTURE_ERROR y el arranque sigue;
+  solo un fallo de las consultas iniciales detiene el arranque."
+- Decisiones:
+  - D93: enmienda D92. Con D92, un solo lote que hacía fallar `recover`, `restart` o `start` detenía
+    el arranque, y en cada reinicio volvía a encontrarse el mismo lote. La única salida era
+    `docker compose down -v` o editar `BATCH_*` a mano, que 09 §3 prohíbe. No es un catch que
+    convierta un error en éxito: el lote queda `FAILED` y visible, y la causa queda en el log. No
+    puede repetirse en bucle, porque el lote sale de `RECEIVED`/`RUNNING` y su ejecución deja de
+    estar en curso. | Reversible: sí.
+- Archivos protegidos modificados: ninguno, salvo este CHANGELOG. La fila `INFRASTRUCTURE_ERROR` de
+  `02` §5 ya cubre las excepciones no controladas, y D92 solo constaba aquí.
