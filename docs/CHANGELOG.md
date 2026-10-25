@@ -687,3 +687,98 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Los errores propios de Spring (404, 405, tipo de contenido incorrecto) salen en `problem+json`
     pero sin `code`. Se resuelve con FR-14 o FR-18.
   - `dev` ya puede pasar a `main`: con esta rama, un duplicado vuelve a ser un `409`.
+
+## Sprint 2 — Reconciliación de arranque (2026-10-22)
+- Hecho: FR-04 (AC-04.6). Al arrancar, `pipeline-service` pasa por `JobOperator.recover(...)` cada
+  ejecución de `ingestionJob` que quedó `STARTING`, `STARTED` o `STOPPING`. Las busca con
+  `JobRepository.findRunningJobExecutions`, sin SQL sobre las tablas `BATCH_*`. Después:
+  - un lote `RUNNING` pasa a `FAILED` con `INTERRUPTED`, y su archivo se queda en el inbox para FR-21;
+  - un lote `RECEIVED` (en cola) se reencola con `JobOperator.restart(...)`;
+  - un lote `RECEIVED` sin ejecución se lanza con `JobOperator.start(...)` (AC-04.6 y ADR-0009 §4);
+  - un lote en un estado final no se toca: solo se recupera su ejecución.
+  - Test con un apagado real: el estado se siembra en PostgreSQL con los repositorios y después arranca
+    un segundo contexto Spring contra la misma BD y el mismo inbox, sin mocks. Un tercer arranque no
+    cambia nada.
+- Decisión del owner (2026-10-22): "Apruebo que la reconciliación de AC-04.6 corra antes de arrancar
+  el servidor web, que los lotes RECEIVED con ejecución en STARTING se recuperen y se reencolen con
+  JobOperator.restart, y actualizar docs/04 §3 y la tabla de docs/02 §5."
+- Decisiones:
+  - D90: un lote `RECEIVED` con una ejecución en curso no ha ejecutado ningún step, porque
+    `markRunning` está en `beforeJob` y los steps corren después (`AbstractJob.execute`, 6.0.5). Por
+    eso se reencola en vez de quedar `FAILED`, que bloquearía su checksum. Incluye la ejecución en
+    `STARTED`: `AbstractJob` la pone en `STARTED` antes de llamar a `beforeJob`. El restart vuelve a
+    empezar en `intakeStep`, porque `SimpleStepHandler.shouldStart` ejecuta todo step sin una
+    `StepExecution` previa. | Reversible: sí.
+  - D91: la reconciliación es un `SmartLifecycle` de fase 0, no un `ApplicationRunner` ni un
+    `SmartInitializingSingleton`. Corre antes del servidor web (fase `Integer.MAX_VALUE - 2048`) y
+    después de que `MapJobRegistry` registre los jobs en `afterSingletonsInstantiated`, que es lo que
+    necesita `restart`. | Reversible: sí.
+  - D92: si la reconciliación falla, el arranque falla. Seguir arrancando junto a lotes en un estado
+    desconocido sería un "catch que tiene éxito". | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/04-arquitectura.md` §3
+  (la reconciliación) y `docs/02-requisitos-funcionales.md` §5 (la fila `RECEIVED` de la tabla).
+- Pendiente:
+  - FR-21: rechazar el restart de un lote `COMPLETED` aunque su ejecución figure `FAILED`. Ocurre si
+    el proceso muere entre `afterJob` y el guardado final de Spring Batch (caso D).
+  - Los contextos de test comparten la BD, así que cada contexto nuevo también reconcilia lo que
+    dejaron otras clases de test. Ningún test lo comprueba hoy, pero conviene saberlo si aparece un
+    test inestable.
+
+## Sprint 2 — Aislamiento por lote en la reconciliación de arranque (2026-10-24)
+- Hecho: FR-04 (AC-04.6). Un lote que la reconciliación no puede reconciliar ya no detiene el
+  arranque.
+  - Si su `recover`, `restart` o `start` lanza, se registra un `log.error` y el lote pasa a
+    `FAILED` con `INFRASTRUCTURE_ERROR`. Ese UPDATE solo actúa desde `RECEIVED` o `RUNNING`, así que
+    nunca pisa un estado final. Luego sigue con el siguiente lote.
+  - Una ejecución cuyo `batchId` no se puede leer, o cuyo lote no tiene fila, se recupera igualmente
+    con `recover` y deja un `log.error`. No hay lote que marcar.
+  - Solo detiene el arranque un fallo de las consultas iniciales (`findRunningJobExecutions`,
+    `findReceived`) o del propio UPDATE: los tres significan que la BD no está disponible.
+  - Test con los rechazos reales de Spring Batch (`JobInstanceAlreadyCompleteException` en el
+    restart y en el start), una ejecución sin fila, otra con un `batchId` ilegible y un lote normal
+    que termina `COMPLETED`. Sin mocks del `JobOperator`.
+- Decisión del owner (2026-10-24): "Apruebo que la reconciliación de arranque aísle cada lote: si su
+  recover, restart o start falla, el lote queda FAILED con INFRASTRUCTURE_ERROR y el arranque sigue;
+  solo un fallo de las consultas iniciales detiene el arranque."
+- Decisiones:
+  - D93: enmienda D92. Con D92, un solo lote que hacía fallar `recover`, `restart` o `start` detenía
+    el arranque, y en cada reinicio volvía a encontrarse el mismo lote. La única salida era
+    `docker compose down -v` o editar `BATCH_*` a mano, que 09 §3 prohíbe. No es un catch que
+    convierta un error en éxito: el lote queda `FAILED` y visible, y la causa queda en el log. No
+    puede repetirse en bucle, porque el lote sale de `RECEIVED`/`RUNNING` y su ejecución deja de
+    estar en curso. | Reversible: sí.
+- Archivos protegidos modificados: ninguno, salvo este CHANGELOG. La fila `INFRASTRUCTURE_ERROR` de
+  `02` §5 ya cubre las excepciones no controladas, y D92 solo constaba aquí.
+
+## Sprint 2 — Estado de lotes (2026-10-24)
+- Hecho: FR-14 (AC-14.1 a AC-14.4) y el `code` de NFR-20 en los errores del framework.
+  - `GET /api/v1/ingestions/{batchId}` devuelve el objeto de `06` B.2. Mientras el lote no está
+    `COMPLETED`, los contadores y `aiCalls` salen de `COUNT(*)` sobre las tablas; al terminar, de las
+    columnas guardadas (AC-14.2).
+  - `GET /api/v1/ingestions?status=&page=&size=` usa la misma forma por elemento y ordena por
+    `received_at DESC, id`, así que el orden es estable entre páginas. Usa el índice
+    `ix_batch_status_received`, que ya existía.
+  - Respuestas de error:
+    - `404 BATCH_NOT_FOUND` para un lote inexistente;
+    - `400 INVALID_PARAMETER` para un `batchId` que no es UUID, un `status` desconocido, `page` < 0 o
+      `size` fuera de 1..200;
+    - los errores propios de Spring llevan como `code` el nombre de su estado HTTP.
+  - Corrige de paso que un parámetro con un tipo inválido acababa en `500`.
+- Decisión del owner (2026-10-24): "Apruebo los DTO de contrato de GET /api/v1/ingestions/{batchId}
+  y del listado (cada elemento con la forma de B.2), añadir a docs/06 B los codes BATCH_NOT_FOUND,
+  NOT_FOUND, METHOD_NOT_ALLOWED e INVALID_PARAMETER con size > 200 → 400, la regla de que los demás
+  errores del framework usan como code el nombre del estado HTTP en mayúsculas, y que esta rama
+  incluya el code de NFR-20."
+- Decisiones:
+  - D94: los contadores de un lote `FAILED`, `REJECTED`, `RECEIVED` o `RUNNING` también salen de
+    `COUNT(*)`, porque solo `complete` guarda las columnas. Así, un lote `FAILED` muestra los chunks
+    que llegó a confirmar. | Reversible: sí.
+  - D95: `read` no tiene caso `null`. `read_count` es `NOT NULL DEFAULT 0` en V2, así que vale `0`
+    en `RECEIVED` y en un `REJECTED` del intake sin tratamiento especial. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` B
+  (regla de los errores del framework, los codes nuevos, el límite de `size`, las notas de B.2 y la
+  forma del listado) y los DTO de contrato `BatchResponse` y `PageResponse`.
+- Pendiente:
+  - Cuando llegue FR-08, `complete` debe guardar también `ai_calls_count`. Hoy no lo guarda, y un
+    lote `COMPLETED` mostraría `aiCalls = 0`.
+  - Cerrado: el `code` en los 404 y 405 de Spring (pendiente de la entrada de ingestas duplicadas).

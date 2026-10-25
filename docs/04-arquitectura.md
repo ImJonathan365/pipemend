@@ -93,7 +93,7 @@ ingestionJob  (parámetros identificadores: batchId, sourceChecksum)
 - El job se lanza de forma **asíncrona** con `JobOperator` sobre un `TaskExecutor` de **un solo hilo** con cola (NFR-10); el endpoint responde `202` con `status = RECEIVED` o `RUNNING`. <!-- rev: R-28 -->
 - Un `JobExecutionListener` marca el lote `RUNNING` y guarda su `job_execution_id` al empezar cada ejecución (también en un reinicio, cuando `intakeStep` ya está `COMPLETED` y no se repite; D70), y actualiza `ingestion_batch` ante fallas (`FAILED` + `failureReason`). La correspondencia de estados Spring Batch ↔ `ingestion_batch` está en `02` §5.
 - Parámetros identificadores: `batchId` y `sourceChecksum`, lo que habilita el reinicio (FR-21).
-- **Reconciliación de arranque** (AC-04.6): un `ApplicationRunner` busca lotes `RUNNING` cuya `JobExecution` quedó `STARTED`, llama a `JobOperator.recover(...)` y marca el lote `FAILED`/`INTERRUPTED`; reencola los `RECEIVED` sin ejecución. <!-- rev: R-12 -->
+- **Reconciliación de arranque** (AC-04.6): un `SmartLifecycle` que corre **antes de que arranque el servidor web** (con un `ApplicationRunner`, una carga que entrara en ese hueco dejaría una ejecución en cola que se tomaría por interrumpida). Pasa por `JobOperator.recover(...)` cada ejecución que quedó `STARTING`/`STARTED`/`STOPPING`, sin tocar las tablas `BATCH_*` con SQL. Después, según el lote: `RUNNING` → `FAILED`/`INTERRUPTED`; `RECEIVED` (en cola, ningún step ejecutado) → `JobOperator.restart(...)`; en un estado final, no se toca. Los `RECEIVED` sin ejecución se lanzan con `JobOperator.start(...)`. <!-- rev: R-12 -->
 
 <!-- rev: R-16 -->
 ### 3.1 Trampas de Spring Boot 4 / Spring Batch 6 que afectan esta arquitectura

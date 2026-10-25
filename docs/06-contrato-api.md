@@ -377,6 +377,10 @@ Paginación: `page` (0-based, default 0), `size` (default 20, máx 200). Respues
 { "content": [ ... ], "page": 0, "size": 20, "totalElements": 134, "totalPages": 7 }
 ```
 
+`page` < 0 o `size` fuera de 1..200 → `400 INVALID_PARAMETER`; un `size` mayor que 200 se rechaza, no se recorta. <!-- owner, 2026-10-24 -->
+
+**Errores del framework** (ruta inexistente, método no permitido, tipo de contenido no aceptado…): usan como `code` el nombre del estado HTTP en mayúsculas, por ejemplo `404 NOT_FOUND` o `405 METHOD_NOT_ALLOWED`, con `requestId` como el resto (NFR-20). Un parámetro de ruta o de consulta con un tipo inválido (un `batchId` que no es UUID) es `400 INVALID_PARAMETER`. <!-- owner, 2026-10-24 -->
+
 ## B.1 `POST /api/v1/ingestions`
 
 ```bash
@@ -437,6 +441,13 @@ Otros errores: `400 EMPTY_FILE`, `400 MISSING_FILE`, `413 FILE_TOO_LARGE`, `415 
   "durationMs": 8123
 }
 ```
+
+- Mientras el lote no está `COMPLETED`, `direct`, `autoCorrected`, `quarantined` y `aiCalls` se calculan con `COUNT(*)` sobre las tablas; al terminar salen de las columnas de `ingestion_batch` (AC-14.2). `read` vale `0` hasta que `intakeStep` cuenta los registros. `durationMs` es `null` mientras falte `startedAt` o `finishedAt`. <!-- owner, 2026-10-24 -->
+- `batchId` inexistente → `404 BATCH_NOT_FOUND` (AC-14.4).
+
+## B.2 bis `GET /api/v1/ingestions?status=&page=&size=`
+
+Respuesta paginada cuyos elementos tienen **la misma forma que B.2**, ordenados por `receivedAt` descendente y, a igualdad, por `batchId` (orden estable entre páginas, AC-14.3). `status` es opcional y debe ser un estado de lote de `02` §5; otro valor → `400 INVALID_PARAMETER`. <!-- owner, 2026-10-24 -->
 
 ## B.3 `GET /api/v1/metrics/summary`
 
