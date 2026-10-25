@@ -1,5 +1,7 @@
 package com.pipemend.pipeline.persistence;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -181,6 +183,73 @@ public class IngestionBatchRepository {
                 .optional();
     }
 
+    // AC-14.2: until the batch completes, the counters come from the committed rows; afterwards, from the columns.
+    private static final String BATCH_VIEW = """
+            SELECT b.id, b.status, b.source_filename, b.source_type, b.source_checksum, b.schema_name,
+                b.schema_version, b.schema_mapping::text AS schema_mapping,
+                b.schema_drift_report::text AS schema_drift_report, b.failure_reason, b.read_count,
+                b.received_at, b.started_at, b.finished_at,
+                CASE WHEN b.status = 'COMPLETED' THEN b.direct_count ELSE (SELECT count(*) FROM sales_transaction s
+                    WHERE s.batch_id = b.id AND s.load_origin = 'DIRECT') END AS direct,
+                CASE WHEN b.status = 'COMPLETED' THEN b.auto_corrected_count ELSE (SELECT count(*)
+                    FROM sales_transaction s WHERE s.batch_id = b.id AND s.load_origin = 'AUTO_CORRECTED') END
+                    AS auto_corrected,
+                CASE WHEN b.status = 'COMPLETED' THEN b.quarantined_count ELSE (SELECT count(*)
+                    FROM quarantine_record q WHERE q.batch_id = b.id) END AS quarantined,
+                CASE WHEN b.status = 'COMPLETED' THEN b.ai_calls_count ELSE (SELECT count(*) FROM ai_call_log a
+                    WHERE a.batch_id = b.id AND a.outcome <> 'CACHE_HIT') END AS ai_calls
+            FROM ingestion_batch b
+            """;
+
+    public Optional<BatchView> find(UUID batchId) {
+        return jdbc.sql(BATCH_VIEW + "WHERE b.id = :id")
+                .param("id", batchId)
+                .query(IngestionBatchRepository::batchView)
+                .optional();
+    }
+
+    /** Newest first; the id breaks ties so that pages stay stable (AC-14.3). */
+    public List<BatchView> page(@Nullable String status, int page, int size) {
+        return jdbc.sql(BATCH_VIEW + """
+                        WHERE CAST(:status AS text) IS NULL OR b.status = :status
+                        ORDER BY b.received_at DESC, b.id LIMIT :size OFFSET :offset
+                        """)
+                .param("status", status)
+                .param("size", size)
+                .param("offset", (long) page * size)
+                .query(IngestionBatchRepository::batchView)
+                .list();
+    }
+
+    public long count(@Nullable String status) {
+        return jdbc.sql("SELECT count(*) FROM ingestion_batch WHERE CAST(:status AS text) IS NULL OR status = :status")
+                .param("status", status)
+                .query(Long.class)
+                .single();
+    }
+
+    private static BatchView batchView(ResultSet rs, int row) throws SQLException {
+        return new BatchView(
+                rs.getObject("id", UUID.class),
+                rs.getString("status"),
+                rs.getString("source_filename"),
+                rs.getString("source_type"),
+                rs.getString("source_checksum"),
+                rs.getString("schema_name"),
+                rs.getString("schema_version"),
+                rs.getString("schema_mapping"),
+                rs.getString("schema_drift_report"),
+                rs.getString("failure_reason"),
+                rs.getInt("read_count"),
+                rs.getInt("direct"),
+                rs.getInt("auto_corrected"),
+                rs.getInt("quarantined"),
+                rs.getInt("ai_calls"),
+                rs.getObject("received_at", OffsetDateTime.class),
+                rs.getObject("started_at", OffsetDateTime.class),
+                rs.getObject("finished_at", OffsetDateTime.class));
+    }
+
     /** Counts read from the tables, never from the step (NFR-06, docs/05 section 6). */
     public Counts counts(UUID batchId) {
         return jdbc.sql("""
@@ -227,6 +296,26 @@ public class IngestionBatchRepository {
     public record ActiveBatch(UUID id, String status) {}
 
     public record ReceivedBatch(UUID id, String checksum) {}
+
+    public record BatchView(
+            UUID id,
+            String status,
+            String sourceFilename,
+            String sourceType,
+            String sourceChecksum,
+            String schemaName,
+            String schemaVersion,
+            @Nullable String schemaMappingJson,
+            @Nullable String schemaDriftReportJson,
+            @Nullable String failureReason,
+            int read,
+            int direct,
+            int autoCorrected,
+            int quarantined,
+            int aiCalls,
+            OffsetDateTime receivedAt,
+            @Nullable OffsetDateTime startedAt,
+            @Nullable OffsetDateTime finishedAt) {}
 
     public record Counts(
             int read, int direct, int autoCorrected, int quarantined, int inBoth, int distinctRows, int maxRow) {
