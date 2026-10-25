@@ -782,3 +782,53 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Cuando llegue FR-08, `complete` debe guardar también `ai_calls_count`. Hoy no lo guarda, y un
     lote `COMPLETED` mostraría `aiCalls = 0`.
   - Cerrado: el `code` en los 404 y 405 de Spring (pendiente de la entrada de ingestas duplicadas).
+
+## Sprint 3 — Contrato de triage (2026-10-24)
+- Hecho: FR-08, la parte del contrato (`06` A.1). Todavía no hay ruta `/v1/triage`.
+  - `ai-service/app/domain/contracts.py` contiene `TriageRequest` y `TriageResponse`, con sus enums.
+    - La request rechaza los campos desconocidos (`extra="forbid"`, `422`). La respuesta los
+      ignora, así que añadir un campo opcional sigue siendo compatible (`09` §7.5).
+    - Los validadores de la respuesta solo cubren lo que no necesita la request: `correction` ⇔
+      `AUTO_FIXABLE`, `suggestedHumanAction` en `NEEDS_HUMAN_REVIEW`, `recordDecision` y
+      `maxSeverity` coherentes y ningún `violationId` repetido. El resto de AC-08.7 queda para
+      `TriageResponseValidator`, en el pipeline.
+  - `contracts/ai-service.openapi.json` se genera con `uv run python -m app.contract_export` (desde
+    `ai-service`). Un test lo compara byte a byte con el archivo versionado, así que una
+    desincronización hace fallar el paso "Test" del CI sin tocar `ci.yml`.
+  - `contracts/fixtures/` contiene 24 fixtures escritas a mano a partir del contrato, sin usar
+    `data/` ni `labels.csv`. Cada inválida rompe una sola regla. `index.json` dice, para cada una,
+    qué request la acompaña, el resultado esperado y si Pydantic la acepta, para que la usen pytest
+    y, más adelante, los tests Java.
+- Decisión del owner (2026-10-24): "Apruebo crear ai-service/app/domain/contracts.py con los modelos
+  de TriageRequest y TriageResponse de docs/06 A.1, generar contracts/ai-service.openapi.json con
+  app.contract_export, escribir a mano las fixtures de contracts/fixtures/, modificar docs/06 para
+  añadir a expected las claves expectedColumns y receivedColumns (D63), las filas violationId y
+  field a la tabla de la respuesta y la regla de que la request rechaza campos desconocidos con
+  422, y alinear docs/02 AC-08.7 con el orden de 06."
+  - Respuestas a las preguntas del plan: export con `app.openapi()` más los modelos añadidos;
+    orden de las `analyses` opción A (el pipeline también rechaza un orden distinto);
+    `violationId` y `field` obligatorios; `extra="forbid"` en la request, escrito en `06` junto a
+    las otras dos fronteras; `expectedColumns` y `receivedColumns`.
+- Decisiones:
+  - D96: cierra D63. `expected` de `MALFORMED_ROW` lleva `expectedColumns` y `receivedColumns`.
+    `receivedColumns` es `null` si la línea no se pudo separar en columnas (comilla suelta). El
+    pipeline empieza a emitirlas en su rama de FR-07. | Reversible: sí (claves opcionales).
+  - D97: los esquemas añadidos se generan como los generará FastAPI 0.141.1 cuando exista la ruta.
+    Lo verifiqué en el código fuente de FastAPI:
+    - `fastapi/_compat/v2.py`, `get_definitions` (l.285-336): la request en modo `validation` y la
+      respuesta en modo `serialization`, porque `separate_input_output_schemas=True` conserva el
+      modo de cada campo (l.329);
+    - `REF_TEMPLATE = "#/components/schemas/{model}"` (`fastapi/openapi/constants.py:3`);
+    - las descripciones se recortan en el primer `\f` (l.337-340).
+
+    Los nombres los pone Pydantic, que solo añade `-Input` o `-Output` cuando un modelo se usa en
+    los dos modos. Ningún modelo del contrato está en los dos lados, y el export falla si aparece
+    un sufijo. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `ai-service/app/domain/contracts.py`
+  (nuevo), `contracts/**` (nuevo), `docs/06-contrato-api.md` (las tres fronteras, A.1) y
+  `docs/02-requisitos-funcionales.md` AC-08.7 (el orden).
+- Pendiente:
+  - Rama de la ruta `POST /v1/triage`: un test que confirme que `build_spec()` es igual a
+    `app.openapi()` sin el añadido. Cuando ese test pase, el añadido se puede quitar.
+  - Rama del pipeline (FR-07 y AC-08.7): emitir `expectedColumns` y `receivedColumns`, y usar las
+    fixtures de `contracts/fixtures/` en `TriageResponseValidator`.
