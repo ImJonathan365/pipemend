@@ -6,10 +6,15 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import java.io.IOException;
 import java.net.URI;
+import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,9 +24,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class IngestionController {
 
     private final IngestionService ingestions;
+    private final BatchQueryService queries;
 
-    public IngestionController(IngestionService ingestions) {
+    public IngestionController(IngestionService ingestions, BatchQueryService queries) {
         this.ingestions = ingestions;
+        this.queries = queries;
     }
 
     @Operation(
@@ -55,5 +62,29 @@ public class IngestionController {
         return ResponseEntity.accepted()
                 .location(URI.create("/api/v1/ingestions/" + response.batchId()))
                 .body(response);
+    }
+
+    @Operation(
+            summary = "Status and counters of a batch",
+            description = "While the batch runs, the counters reflect the committed chunks (FR-14).")
+    @ApiResponse(responseCode = "200", description = "The batch")
+    @ApiResponse(responseCode = "400", description = "INVALID_PARAMETER: the id is not a UUID")
+    @ApiResponse(responseCode = "404", description = "BATCH_NOT_FOUND")
+    @GetMapping("/{batchId}")
+    public BatchResponse batch(@PathVariable UUID batchId) {
+        return queries.find(batchId);
+    }
+
+    @Operation(summary = "Batches, newest first", description = "Paginated; optionally filtered by status (FR-14).")
+    @ApiResponse(responseCode = "200", description = "A page of batches")
+    @ApiResponse(
+            responseCode = "400",
+            description = "INVALID_PARAMETER: unknown status, page below 0 or size outside 1..200")
+    @GetMapping
+    public PageResponse<BatchResponse> batches(
+            @RequestParam(required = false) @Nullable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return queries.list(status, page, size);
     }
 }

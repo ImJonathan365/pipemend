@@ -1,7 +1,9 @@
 package com.pipemend.pipeline.common;
 
+import com.pipemend.pipeline.ingestion.BatchNotFoundException;
 import com.pipemend.pipeline.ingestion.DuplicateIngestionException;
 import com.pipemend.pipeline.ingestion.EmptyFileException;
+import com.pipemend.pipeline.ingestion.InvalidQueryParameterException;
 import com.pipemend.pipeline.ingestion.UnsupportedFileTypeException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -15,10 +17,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
-/** Every API error as application/problem+json with the stable codes of docs/06 B.1 (NFR-20); never a stacktrace. */
+/** Every API error as application/problem+json with the stable codes of docs/06 B (NFR-20); never a stacktrace. */
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
@@ -39,6 +42,17 @@ public class ApiExceptionHandler {
         return respond(problem);
     }
 
+    @ExceptionHandler(BatchNotFoundException.class)
+    ResponseEntity<ProblemDetail> notFound(BatchNotFoundException e, HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "BATCH_NOT_FOUND", "Batch not found", e, request);
+    }
+
+    // Without this mapping a path or query value of the wrong type would end as a 500.
+    @ExceptionHandler({InvalidQueryParameterException.class, MethodArgumentTypeMismatchException.class})
+    ResponseEntity<ProblemDetail> invalidParameter(Exception e, HttpServletRequest request) {
+        return problem(HttpStatus.BAD_REQUEST, "INVALID_PARAMETER", "Invalid parameter", e, request);
+    }
+
     @ExceptionHandler(EmptyFileException.class)
     ResponseEntity<ProblemDetail> empty(EmptyFileException e, HttpServletRequest request) {
         return problem(HttpStatus.BAD_REQUEST, "EMPTY_FILE", "Empty file", e, request);
@@ -57,9 +71,11 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e, HttpServletRequest request) {
-        // Spring's own errors (404, 405, wrong content type...) keep their status and body.
+        // Spring's own errors (404, 405, wrong content type...) keep their status and body; docs/06 B makes the
+        // status name their code.
         if (e instanceof ErrorResponse spring) {
             ProblemDetail problem = spring.getBody();
+            problem.setProperty("code", HttpStatus.valueOf(problem.getStatus()).name());
             problem.setProperty("requestId", request.getAttribute(RequestIdFilter.ATTRIBUTE));
             return respond(problem);
         }
@@ -94,6 +110,8 @@ public class ApiExceptionHandler {
         return switch (e) {
             case MissingServletRequestPartException missing -> "The multipart part 'file' is required.";
             case MaxUploadSizeExceededException tooLarge -> "The file exceeds the maximum upload size.";
+            case MethodArgumentTypeMismatchException mismatch ->
+                "The parameter '" + mismatch.getName() + "' has an invalid value.";
             default -> e.getMessage();
         };
     }

@@ -749,3 +749,36 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     estar en curso. | Reversible: sí.
 - Archivos protegidos modificados: ninguno, salvo este CHANGELOG. La fila `INFRASTRUCTURE_ERROR` de
   `02` §5 ya cubre las excepciones no controladas, y D92 solo constaba aquí.
+
+## Sprint 2 — Estado de lotes (2026-10-24)
+- Hecho: FR-14 (AC-14.1 a AC-14.4) y el `code` de NFR-20 en los errores del framework.
+  - `GET /api/v1/ingestions/{batchId}` devuelve el objeto de `06` B.2. Mientras el lote no está
+    `COMPLETED`, los contadores y `aiCalls` salen de `COUNT(*)` sobre las tablas; al terminar, de las
+    columnas guardadas (AC-14.2).
+  - `GET /api/v1/ingestions?status=&page=&size=` usa la misma forma por elemento y ordena por
+    `received_at DESC, id`, así que el orden es estable entre páginas. Usa el índice
+    `ix_batch_status_received`, que ya existía.
+  - Respuestas de error:
+    - `404 BATCH_NOT_FOUND` para un lote inexistente;
+    - `400 INVALID_PARAMETER` para un `batchId` que no es UUID, un `status` desconocido, `page` < 0 o
+      `size` fuera de 1..200;
+    - los errores propios de Spring llevan como `code` el nombre de su estado HTTP.
+  - Corrige de paso que un parámetro con un tipo inválido acababa en `500`.
+- Decisión del owner (2026-10-24): "Apruebo los DTO de contrato de GET /api/v1/ingestions/{batchId}
+  y del listado (cada elemento con la forma de B.2), añadir a docs/06 B los codes BATCH_NOT_FOUND,
+  NOT_FOUND, METHOD_NOT_ALLOWED e INVALID_PARAMETER con size > 200 → 400, la regla de que los demás
+  errores del framework usan como code el nombre del estado HTTP en mayúsculas, y que esta rama
+  incluya el code de NFR-20."
+- Decisiones:
+  - D94: los contadores de un lote `FAILED`, `REJECTED`, `RECEIVED` o `RUNNING` también salen de
+    `COUNT(*)`, porque solo `complete` guarda las columnas. Así, un lote `FAILED` muestra los chunks
+    que llegó a confirmar. | Reversible: sí.
+  - D95: `read` no tiene caso `null`. `read_count` es `NOT NULL DEFAULT 0` en V2, así que vale `0`
+    en `RECEIVED` y en un `REJECTED` del intake sin tratamiento especial. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` B
+  (regla de los errores del framework, los codes nuevos, el límite de `size`, las notas de B.2 y la
+  forma del listado) y los DTO de contrato `BatchResponse` y `PageResponse`.
+- Pendiente:
+  - Cuando llegue FR-08, `complete` debe guardar también `ai_calls_count`. Hoy no lo guarda, y un
+    lote `COMPLETED` mostraría `aiCalls = 0`.
+  - Cerrado: el `code` en los 404 y 405 de Spring (pendiente de la entrada de ingestas duplicadas).
