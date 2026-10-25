@@ -1,0 +1,29 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "recordDecision": "NEEDS_HUMAN_REVIEW",
+  "maxSeverity": "CRITICAL",
+  "summary": "La fila tiene una columna más que la cabecera y no se puede interpretar de forma segura.",
+  "analyses": [
+    {
+      "violationId": "v1",
+      "field": "_record",
+      "rootCause": "STRUCTURAL",
+      "explanation": "Se esperaban 8 columnas y la fila tiene 9: probablemente hay un separador de más.",
+      "severity": "CRITICAL",
+      "classification": "NEEDS_HUMAN_REVIEW",
+      "confidence": 0.98,
+      "correction": null,
+      "suggestedHumanAction": "Revisar la fila en el archivo de origen, corregir las columnas y reenviarla."
+    }
+  ],
+  "meta": {
+    "provider": "mock",
+    "model": "mock-rules-v1",
+    "promptVersion": "triage_v1",
+    "latencyMs": 3,
+    "cacheHit": false,
+    "inputTokens": null,
+    "outputTokens": null,
+    "llmCalls": 0
+  }
+}

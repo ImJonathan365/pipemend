@@ -1,0 +1,850 @@
+{
+  "components": {
+    "schemas": {
+      "Analysis": {
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/Classification"
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Correction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "explanation": {
+            "maxLength": 800,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "rootCause": {
+            "$ref": "#/components/schemas/RootCause"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "suggestedHumanAction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestedhumanaction"
+          },
+          "violationId": {
+            "title": "Violationid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "violationId",
+          "field",
+          "rootCause",
+          "explanation",
+          "severity",
+          "classification",
+          "confidence",
+          "correction",
+          "suggestedHumanAction"
+        ],
+        "title": "Analysis",
+        "type": "object"
+      },
+      "CacheInfo": {
+        "properties": {
+          "entries": {
+            "title": "Entries",
+            "type": "integer"
+          },
+          "maxEntries": {
+            "title": "Maxentries",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "maxEntries"
+        ],
+        "title": "CacheInfo",
+        "type": "object"
+      },
+      "Classification": {
+        "enum": [
+          "AUTO_FIXABLE",
+          "NEEDS_HUMAN_REVIEW"
+        ],
+        "title": "Classification",
+        "type": "string"
+      },
+      "Correction": {
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/Operation"
+          },
+          "originalValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originalvalue"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Parameters",
+            "type": "object"
+          },
+          "proposedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposedvalue"
+          }
+        },
+        "required": [
+          "operation",
+          "originalValue",
+          "proposedValue",
+          "parameters"
+        ],
+        "title": "Correction",
+        "type": "object"
+      },
+      "ErrorCode": {
+        "description": "docs/02 section 3 without SCHEMA_DRIFT, which is a file-level code.",
+        "enum": [
+          "MISSING_REQUIRED_FIELD",
+          "INVALID_TYPE",
+          "INVALID_FORMAT",
+          "PATTERN_MISMATCH",
+          "OUT_OF_RANGE",
+          "INVALID_ENUM_VALUE",
+          "MAX_LENGTH_EXCEEDED",
+          "BUSINESS_RULE_VIOLATION",
+          "MALFORMED_ROW"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "Expected": {
+        "additionalProperties": false,
+        "description": "What the field should have been (docs/02 section 3.1, rule 4).",
+        "properties": {
+          "allowedValues": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Allowedvalues"
+          },
+          "decimalSeparator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Decimalseparator"
+          },
+          "expectedColumns": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expectedcolumns"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Format"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max"
+          },
+          "maxLength": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Maxlength"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min"
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pattern"
+          },
+          "receivedColumns": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receivedcolumns"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rule"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scale"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type"
+          }
+        },
+        "title": "Expected",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "providerConfigured": {
+            "title": "Providerconfigured",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "provider",
+          "providerConfigured"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "InfoResponse": {
+        "properties": {
+          "cache": {
+            "$ref": "#/components/schemas/CacheInfo"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/LimitsInfo"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "promptVersions": {
+            "$ref": "#/components/schemas/PromptVersions"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "version",
+          "provider",
+          "model",
+          "promptVersions",
+          "cache",
+          "limits"
+        ],
+        "title": "InfoResponse",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "LimitsInfo": {
+        "properties": {
+          "llmCallsToday": {
+            "title": "Llmcallstoday",
+            "type": "integer"
+          },
+          "maxLlmCallsPerDay": {
+            "title": "Maxllmcallsperday",
+            "type": "integer"
+          },
+          "requestDeadlineSeconds": {
+            "title": "Requestdeadlineseconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requestDeadlineSeconds",
+          "maxLlmCallsPerDay",
+          "llmCallsToday"
+        ],
+        "title": "LimitsInfo",
+        "type": "object"
+      },
+      "Meta": {
+        "description": "Traceability of the answer (NFR-12). `model` is whatever LLM_MODEL holds.",
+        "properties": {
+          "cacheHit": {
+            "title": "Cachehit",
+            "type": "boolean"
+          },
+          "inputTokens": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputtokens"
+          },
+          "latencyMs": {
+            "minimum": 0,
+            "title": "Latencyms",
+            "type": "integer"
+          },
+          "llmCalls": {
+            "minimum": 0,
+            "title": "Llmcalls",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "outputTokens": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputtokens"
+          },
+          "promptVersion": {
+            "title": "Promptversion",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "promptVersion",
+          "latencyMs",
+          "cacheHit",
+          "inputTokens",
+          "outputTokens",
+          "llmCalls"
+        ],
+        "title": "Meta",
+        "type": "object"
+      },
+      "Operation": {
+        "description": "The allowlist of docs/02 section 4; RENAME_COLUMN belongs to schema drift only.",
+        "enum": [
+          "TRIM",
+          "NORMALIZE_CASE",
+          "PARSE_DATE",
+          "PARSE_NUMBER",
+          "MAP_TO_ENUM",
+          "NULLIFY_TOKEN"
+        ],
+        "title": "Operation",
+        "type": "string"
+      },
+      "PromptVersions": {
+        "properties": {
+          "schemaDrift": {
+            "title": "Schemadrift",
+            "type": "string"
+          },
+          "triage": {
+            "title": "Triage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "triage",
+          "schemaDrift"
+        ],
+        "title": "PromptVersions",
+        "type": "object"
+      },
+      "Record": {
+        "additionalProperties": false,
+        "properties": {
+          "raw": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Raw",
+            "type": "object"
+          },
+          "sourceRowNumber": {
+            "minimum": 1,
+            "title": "Sourcerownumber",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sourceRowNumber",
+          "raw"
+        ],
+        "title": "Record",
+        "type": "object"
+      },
+      "RootCause": {
+        "enum": [
+          "FORMAT_MISMATCH",
+          "LOCALE_FORMAT",
+          "WHITESPACE",
+          "CASING",
+          "SYNONYM",
+          "NULL_TOKEN",
+          "MISSING_VALUE",
+          "IMPLAUSIBLE_VALUE",
+          "TYPE_MISMATCH",
+          "AMBIGUOUS_VALUE",
+          "BUSINESS_RULE",
+          "STRUCTURAL",
+          "UNKNOWN"
+        ],
+        "title": "RootCause",
+        "type": "string"
+      },
+      "SchemaRef": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "SchemaRef",
+        "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "LOW",
+          "MEDIUM",
+          "HIGH",
+          "CRITICAL"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "Source": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/SourceType"
+          }
+        },
+        "required": [
+          "filename",
+          "type"
+        ],
+        "title": "Source",
+        "type": "object"
+      },
+      "SourceType": {
+        "enum": [
+          "CSV",
+          "JSON"
+        ],
+        "title": "SourceType",
+        "type": "string"
+      },
+      "TriageOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "explanationLanguage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "es",
+                  "en"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Explanationlanguage"
+          }
+        },
+        "title": "TriageOptions",
+        "type": "object"
+      },
+      "TriageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "batchId": {
+            "format": "uuid",
+            "title": "Batchid",
+            "type": "string"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TriageOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "record": {
+            "$ref": "#/components/schemas/Record"
+          },
+          "requestId": {
+            "format": "uuid",
+            "title": "Requestid",
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SchemaRef"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Violations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requestId",
+          "batchId",
+          "schema",
+          "source",
+          "record",
+          "violations"
+        ],
+        "title": "TriageRequest",
+        "type": "object"
+      },
+      "TriageResponse": {
+        "description": "Unknown fields are ignored on this side: adding an optional field is compatible (docs/06).",
+        "properties": {
+          "analyses": {
+            "items": {
+              "$ref": "#/components/schemas/Analysis"
+            },
+            "minItems": 1,
+            "title": "Analyses",
+            "type": "array"
+          },
+          "maxSeverity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          },
+          "recordDecision": {
+            "$ref": "#/components/schemas/Classification"
+          },
+          "requestId": {
+            "format": "uuid",
+            "title": "Requestid",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 1000,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "recordDecision",
+          "maxSeverity",
+          "summary",
+          "analyses",
+          "meta"
+        ],
+        "title": "TriageResponse",
+        "type": "object"
+      },
+      "Violation": {
+        "additionalProperties": false,
+        "properties": {
+          "errorCode": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "exceptionType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exceptiontype"
+          },
+          "expected": {
+            "$ref": "#/components/schemas/Expected"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "receivedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receivedvalue"
+          },
+          "sourceHeader": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sourceheader"
+          },
+          "technicalMessage": {
+            "maxLength": 1000,
+            "title": "Technicalmessage",
+            "type": "string"
+          },
+          "violationId": {
+            "minLength": 1,
+            "title": "Violationid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "violationId",
+          "field",
+          "errorCode",
+          "receivedValue",
+          "expected",
+          "technicalMessage"
+        ],
+        "title": "Violation",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Explains, classifies and proposes corrections for invalid records. It only proposes: the deterministic policy in pipeline-service decides (ADR-0003).",
+    "title": "PipeMend ai-service",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Always HTTP 200 while the process is alive.\n\nThe compose healthcheck only proves the service answers (docs/06 A.3). A real provider\nwithout an API key is reported as `degraded` instead of failing (AC-17.3).",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness and provider status",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/v1/info": {
+      "get": {
+        "description": "AC-17.5. Never exposes the API key, only whether a provider is configured.",
+        "operationId": "info_v1_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Active provider, model and prompt versions",
+        "tags": [
+          "system"
+        ]
+      }
+    }
+  }
+}

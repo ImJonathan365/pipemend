@@ -1,0 +1,188 @@
+[
+  {
+    "fixture": "triage-request.format-errors.json",
+    "kind": "request",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "docs/06 A.1 example"
+  },
+  {
+    "fixture": "triage-request.missing-price.json",
+    "kind": "request",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "MISSING_REQUIRED_FIELD"
+  },
+  {
+    "fixture": "triage-request.malformed-row.json",
+    "kind": "request",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "AC-07.4 with _rawLine, D63"
+  },
+  {
+    "fixture": "triage-request.malformed-row-without-raw.json",
+    "kind": "request",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "AC-07.4 with AI_SEND_FULL_RECORD=false, D63"
+  },
+  {
+    "fixture": "triage-request.invalid.unknown-field.json",
+    "kind": "request",
+    "expected": "VALIDATION_ERROR",
+    "pydantic": "rejects",
+    "rule": "docs/06: the request rejects unknown fields"
+  },
+  {
+    "fixture": "triage-request.invalid.duplicate-violation-id.json",
+    "kind": "request",
+    "expected": "VALIDATION_ERROR",
+    "pydantic": "rejects",
+    "rule": "docs/06 A.1: violationId unique within the request"
+  },
+  {
+    "fixture": "triage-response.auto-fixable.json",
+    "kind": "response",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "docs/06 A.1 example",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.needs-human-review.json",
+    "kind": "response",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "AC-08.3 floor HIGH",
+    "request": "triage-request.missing-price.json"
+  },
+  {
+    "fixture": "triage-response.malformed-row.json",
+    "kind": "response",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "AC-08.3 floor CRITICAL",
+    "request": "triage-request.malformed-row.json"
+  },
+  {
+    "fixture": "triage-response.unknown-field.json",
+    "kind": "response",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "docs/09 7.5: the pipeline ignores unknown fields",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.request-id-mismatch.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7: requestId equals the one sent",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.missing-analysis.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7: exactly the violationIds sent",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.extra-analysis.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7: exactly the violationIds sent",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.wrong-order.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7 and docs/06 A.1: same order as sent",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.duplicate-violation-id.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "AC-08.7: no repeated violationId",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.field-mismatch.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7: field equals the field of its violation",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.original-value-mismatch.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "accepts",
+    "rule": "AC-08.7: originalValue equals receivedValue",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.correction-on-needs-human-review.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "AC-08.7: correction not null only for AUTO_FIXABLE",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.auto-fixable-without-correction.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "AC-08.7: AUTO_FIXABLE needs a correction",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.record-decision-incoherent.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "AC-08.7: recordDecision coherent with analyses",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.max-severity-incoherent.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "AC-08.7: maxSeverity coherent with analyses",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.unknown-root-cause.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "docs/09 7.5: unknown enum value",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.unknown-operation.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "docs/06 A.1 hard rule 4: operation outside the enum",
+    "request": "triage-request.format-errors.json"
+  },
+  {
+    "fixture": "triage-response.invalid.missing-summary.json",
+    "kind": "response",
+    "expected": "AI_INVALID_RESPONSE",
+    "pydantic": "rejects",
+    "rule": "docs/09 7.5: required field missing",
+    "request": "triage-request.format-errors.json"
+  }
+]

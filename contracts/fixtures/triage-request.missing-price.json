@@ -1,0 +1,45 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "batchId": "8a2e6d1c-43b2-4f55-8f6b-1f2b3c4d5e6f",
+  "schema": {
+    "name": "sales_transaction",
+    "version": "1"
+  },
+  "source": {
+    "filename": "dirty-1k.csv",
+    "type": "CSV"
+  },
+  "record": {
+    "sourceRowNumber": 87,
+    "raw": {
+      "Invoice": "536370",
+      "StockCode": "22728",
+      "Description": "ALARM CLOCK BAKELIKE PINK",
+      "Quantity": "24",
+      "InvoiceDate": "2010-12-01 08:45:00",
+      "Price": "",
+      "Customer ID": "[REDACTED]",
+      "Country": "France"
+    }
+  },
+  "violations": [
+    {
+      "violationId": "v1",
+      "field": "unit_price",
+      "sourceHeader": "Price",
+      "errorCode": "MISSING_REQUIRED_FIELD",
+      "receivedValue": "",
+      "expected": {
+        "type": "decimal",
+        "scale": 2,
+        "min": "0",
+        "max": "100000"
+      },
+      "technicalMessage": "Required field 'unit_price' is empty",
+      "exceptionType": null
+    }
+  ],
+  "options": {
+    "explanationLanguage": "es"
+  }
+}
