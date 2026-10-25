@@ -15,9 +15,11 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.ExitStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.JobInstance;
 import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.infrastructure.item.ExecutionContext;
@@ -114,6 +116,35 @@ class StartupReconciliationTest {
         }
     }
 
+    @Test
+    void ac_04_6_aBatchThatCannotBeReconciledFailsAloneAndTheStartupGoesOn() throws Exception {
+        // Spring Batch itself refuses to run again an instance that already has a COMPLETED execution.
+        UUID restartRefused = receive();
+        execution(restartRefused, BatchStatus.COMPLETED);
+        execution(restartRefused, BatchStatus.STARTING);
+        UUID startRefused = receive();
+        execution(startRefused, BatchStatus.COMPLETED);
+        JobExecution withoutRow = execution(UUID.randomUUID(), BatchStatus.STARTING);
+        JobExecution unreadable = execution(
+                new JobParametersBuilder()
+                        .addString(IngestionJobConfiguration.BATCH_ID, "not-a-uuid-" + UUID.randomUUID())
+                        .toJobParameters(),
+                BatchStatus.STARTED);
+        UUID healthy = receive();
+
+        try (ConfigurableApplicationContext restarted = startService()) {
+            assertThat(List.of(restartRefused, startRefused)).allSatisfy(batchId -> {
+                assertThat(batches.findStatus(batchId)).hasValue("FAILED");
+                assertThat(failureReason(batchId)).isEqualTo("INFRASTRUCTURE_ERROR");
+            });
+            assertThat(List.of(withoutRow, unreadable))
+                    .extracting(e -> jobRepository.getJobExecution(e.getId()).getStatus())
+                    .containsOnly(BatchStatus.FAILED);
+            await().atMost(Duration.ofMinutes(2))
+                    .until(() -> batches.status(healthy).equals("COMPLETED"));
+        }
+    }
+
     private ConfigurableApplicationContext startService() {
         // Command-line arguments: builder properties are defaults and application.yml would override the inbox.
         return new SpringApplicationBuilder(PipelineServiceApplication.class)
@@ -137,12 +168,22 @@ class StartupReconciliationTest {
     }
 
     private JobExecution execution(UUID batchId, BatchStatus status) {
-        JobParameters parameters = IngestionJobConfiguration.parameters(batchId, checksum(batchId));
-        JobInstance instance = jobRepository.createJobInstance(IngestionJobConfiguration.JOB_NAME, parameters);
+        return execution(IngestionJobConfiguration.parameters(batchId, checksum(batchId)), status);
+    }
+
+    private JobExecution execution(JobParameters parameters, BatchStatus status) {
+        JobInstance instance = jobRepository.getJobInstance(IngestionJobConfiguration.JOB_NAME, parameters);
+        if (instance == null) {
+            instance = jobRepository.createJobInstance(IngestionJobConfiguration.JOB_NAME, parameters);
+        }
         JobExecution execution = jobRepository.createJobExecution(instance, parameters, new ExecutionContext());
         execution.setStatus(status);
-        if (status == BatchStatus.STARTED) {
+        if (status != BatchStatus.STARTING) {
             execution.setStartTime(LocalDateTime.now());
+        }
+        if (status == BatchStatus.COMPLETED) {
+            execution.setEndTime(LocalDateTime.now());
+            execution.setExitStatus(ExitStatus.COMPLETED);
         }
         jobRepository.update(execution);
         return execution;
