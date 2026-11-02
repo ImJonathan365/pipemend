@@ -832,3 +832,57 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `app.openapi()` sin el añadido. Cuando ese test pase, el añadido se puede quitar.
   - Rama del pipeline (FR-07 y AC-08.7): emitir `expectedColumns` y `receivedColumns`, y usar las
     fixtures de `contracts/fixtures/` en `TriageResponseValidator`.
+
+## Sprint 3 — Proveedor LLM y mock (2026-11-01)
+- Hecho: FR-17 (AC-17.1, AC-17.2) y la frontera LLM → `ai-service` de `06`. Sigue sin haber ruta
+  `/v1/triage`, `triage_service`, `rules.py` ni caché.
+  - `ai-service/app/providers/`: protocolo `LLMProvider` asíncrono, `create_provider` y `MockProvider`,
+    que cubre los 20 `defect_type` de `10` §3 sin conocerlos: mira `errorCode`, `field`,
+    `receivedValue` y `expected`, y nunca `record.raw`.
+  - `ai-service/app/domain/llm_output.py`: salida del LLM con `extra="forbid"`.
+  - `ai-service/app/domain/triage_prompt.py`: bloque `<triage_context>` con la solicitud como dato.
+- Decisión del owner (2026-11-01): "Apruebo crear ai-service/app/domain/llm_output.py con la salida
+  del LLM de la decisión 4 aunque esa frontera sea de FR-08 y el PR sea de FR-17, modificar docs/04
+  (árbol de §6, async en §9 y timeout con asyncio.timeout en el paso 5 de §6), modificar docs/02
+  AC-17.2 para que el mock pueda llevar una tabla fija de alias y tokens nulos en mock.py, añadir la
+  entrada al CHANGELOG, copiar en mock.py los alias y los tokens nulos con un test contra los YAML,
+  añadir pyyaml==6.0.3 al grupo dev de ai-service/pyproject.toml y actualizar uv.lock, y superar las
+  400 líneas en esta rama (hasta ~600)."
+- Decisiones:
+  - D98: el mock lleva una copia fija de los alias y de los tokens nulos, única excepción al "solo a
+    partir de la solicitud" de AC-17.2. No lee archivos en ejecución; un test la compara con los
+    YAML de `pipeline-service/src/main/resources/schemas/`. `pyyaml` queda declarado en el grupo
+    dev. | Alternativas: solo los pares de ejemplo, que no bastan porque el generador elige
+    cualquier alias; leer el YAML, que no está en la imagen de `ai-service`. | Reversible: sí.
+  - D99: la solicitud llega al mock dentro del `user_prompt`, porque cambiar la firma de `04` §9
+    exige ADR. El JSON del bloque escribe cada `<` como `<`, así que ningún dato puede contener
+    el marcador de cierre, tampoco para un LLM real. Sin bloque, el mock lanza una excepción y nunca
+    responde con un análisis vacío. `render_context` deja resuelto el idioma, y el mock no consulta
+    `Settings`. | Reversible: sí.
+  - D100: el timeout es del que llama, con `asyncio.timeout`, y `temperature` es del constructor de
+    cada proveedor real. La firma de `04` §9 solo gana `async` (NFR-10, `09` §7.6). | Reversible: sí.
+  - D101: la salida del LLM solo tiene `summary` y `analyses`. `recordDecision`, `maxSeverity`,
+    `requestId` y `meta` los pone el servicio. No lleva `max_length` (`06` regla 5) ni la comprobación
+    `correction` ⇔ `AUTO_FIXABLE` (`06` regla 3). Solo acepta camelCase, y `confidence` es estricto:
+    `"0.97"` y `true` son salida inválida. | Reversible: sí.
+  - D102: la factory solo tiene la rama de `mock`; cualquier otro valor lanza `ValueError` con su
+    nombre. No se invoca al arrancar, así que AC-17.3 no cambia. | Reversible: sí.
+  - D103: lo que queda fuera del catálogo (`quantity = "6.0"`, `$2.55`, `2,550`, `2.555`,
+    `12/25/2010`) va a humano en `MEDIUM`, por encima del piso de esos códigos. `DATE_AMBIGUOUS`
+    también: el mock no propone para que luego rechace el verificador. `MAX_LENGTH_EXCEEDED` va a
+    humano en `HIGH`, y un test recorre todos los `ErrorCode`, con valores dentro y fuera del
+    catálogo, contra los pisos de `06` A.1. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/llm_output.py` (nuevo), `docs/04-arquitectura.md` (§6 y §9),
+  `docs/02-requisitos-funcionales.md` AC-17.2.
+- Pendiente:
+  - Rama de `triage_service`:
+    - comprobar que las `analyses` son exactamente las violaciones enviadas, en el mismo orden;
+    - anular `correction` en `NEEDS_HUMAN_REVIEW`: `06` regla 1 solo cubre los códigos no
+      corregibles, y `TriageResponse` rechazaría el resto;
+    - fijar `llmCalls` con el mock: el ejemplo de `06` dice 0;
+    - decidir qué hacer hasta que exista `prompts/triage_v1.md`, que es del Sprint 5, aunque `04` §6
+      paso 4 lo use.
+  - Sprint 5: hasta entonces, un `LLM_PROVIDER` real termina en `ValueError` al crear el proveedor.
+  - Sprint 4 (AC-10.6): la fixture de `contracts/fixtures/` con una instrucción inyectada que pide
+    NFR-14. Por ahora, el test del mock lleva la instrucción en línea.

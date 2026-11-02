@@ -225,13 +225,15 @@ ai-service/app
 │   └── system.py         # GET /health, GET /v1/info
 ├── domain/
 │   ├── contracts.py      # Modelos Pydantic del contrato (fuente de la OpenAPI)
+│   ├── llm_output.py     # Salida del LLM, extra="forbid" (frontera no confiable de `06`)
+│   ├── triage_prompt.py  # Bloque marcado con la solicitud como dato (NFR-14)
 │   └── rules.py          # Reglas duras post-LLM (AC-08.3), normalización de salida
 ├── services/
 │   ├── triage_service.py # arma prompt, consulta caché, llama al proveedor, valida, repara
 │   ├── drift_service.py
 │   └── cache.py          # LRU + TTL en memoria
 ├── providers/
-│   ├── base.py           # Protocol LLMProvider: complete_json(system, user, schema) -> dict + usage
+│   ├── base.py           # Protocol LLMProvider: async complete_json(system, user, schema) -> dict + usage
 │   ├── mock.py           # reglas deterministas que cubren el catálogo de defectos
 │   ├── openai_compatible.py
 │   ├── anthropic.py
@@ -247,7 +249,7 @@ Flujo de `triage_service`:
 2. Calcular la clave de caché de cada violación a nivel campo (NFR-11). Si **todas** las violaciones son a nivel campo y están en caché → armar `summary` con plantilla determinista y responder con `cacheHit = true` sin LLM (AC-08.4 d).
 3. Si hay que llamar al LLM: verificar el tope diario (`LLM_MAX_CALLS_PER_DAY`); si se alcanzó → `429 LLM_BUDGET_EXHAUSTED`.
 4. Construir prompt desde `prompts/triage_v{n}.md` con el contexto (JSON delimitado como dato, NFR-14) y el JSON Schema de salida.
-5. Llamar a `provider.complete_json(...)` con `temperature=0` y `timeout = min(LLM_TIMEOUT_SECONDS, restante)`.
+5. Llamar a `await provider.complete_json(...)` dentro de `asyncio.timeout(min(LLM_TIMEOUT_SECONDS, restante))`. `temperature=0` se fija en el constructor de cada proveedor real; ni el timeout ni la temperatura son parte de la firma (§9). <!-- owner, 2026-11-01 -->
 6. Validar con Pydantic en modo estricto (`extra="forbid"` en los modelos de **salida del LLM**: un campo inventado por el LLM es salida inválida). Si falla y queda plazo: **un** reintento de reparación enviando el error de validación. Si vuelve a fallar → `502 LLM_INVALID_OUTPUT`.
 7. Aplicar `rules.py`: forzar `NEEDS_HUMAN_REVIEW` para códigos no corregibles; aplicar el piso de severidad por `errorCode` (`06` A.1); bajar a `NEEDS_HUMAN_REVIEW` si `AUTO_FIXABLE` no trae `correction`; recortar `explanation`/`summary`/`suggestedHumanAction` a su longitud máxima (recortar texto no es un error de contrato); recalcular `maxSeverity` y `recordDecision`.
 8. Guardar en caché los análisis a nivel campo que cumplan AC-08.4 (c) y responder con `meta` (incluye `llmCalls`).
@@ -348,7 +350,7 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 
 ### Cómo agregar un proveedor nuevo
 
-1. Crear `providers/<nombre>.py` implementando el `Protocol` `LLMProvider` (`complete_json(system_prompt, user_prompt, json_schema) -> ProviderResult(content: dict, usage: Usage | None)`).
+1. Crear `providers/<nombre>.py` implementando el `Protocol` `LLMProvider` (`async complete_json(system_prompt, user_prompt, json_schema) -> ProviderResult(content: dict, usage: Usage | None)`; `async` por NFR-10). <!-- owner, 2026-11-01 -->
 2. Registrarlo en `providers/factory.py` bajo un nuevo valor de `LLM_PROVIDER`.
 3. Traducir errores del SDK a las excepciones propias (`ProviderTimeout`, `ProviderUnavailable`, `ProviderRateLimited`, `ProviderAuthError`).
 4. Tests con respuestas simuladas del SDK (sin red).
