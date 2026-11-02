@@ -855,7 +855,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     dev. | Alternativas: solo los pares de ejemplo, que no bastan porque el generador elige
     cualquier alias; leer el YAML, que no está en la imagen de `ai-service`. | Reversible: sí.
   - D99: la solicitud llega al mock dentro del `user_prompt`, porque cambiar la firma de `04` §9
-    exige ADR. El JSON del bloque escribe cada `<` como `<`, así que ningún dato puede contener
+    exige ADR. El JSON del bloque escribe cada `<` como `\u003c`, así que ningún dato puede contener
     el marcador de cierre, tampoco para un LLM real. Sin bloque, el mock lanza una excepción y nunca
     responde con un análisis vacío. `render_context` deja resuelto el idioma, y el mock no consulta
     `Settings`. | Reversible: sí.
