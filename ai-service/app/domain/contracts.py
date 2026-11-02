@@ -9,6 +9,8 @@ from pydantic.alias_generators import to_camel
 
 RAW_LINE_KEY = "_rawLine"
 RAW_LINE_MAX_LENGTH = 2000
+EXPLANATION_MAX_LENGTH = 800
+SUMMARY_MAX_LENGTH = 1000
 
 
 class ContractModel(BaseModel):
@@ -169,7 +171,7 @@ class Analysis(ContractModel):
     violation_id: str
     field: str
     root_cause: RootCause
-    explanation: Annotated[str, Field(max_length=800)]
+    explanation: Annotated[str, Field(max_length=EXPLANATION_MAX_LENGTH)]
     severity: Severity
     classification: Classification
     confidence: Annotated[float, Field(ge=0, le=1)]
@@ -205,7 +207,7 @@ class TriageResponse(ContractModel):
     request_id: UUID
     record_decision: Classification
     max_severity: Severity
-    summary: Annotated[str, Field(max_length=1000)]
+    summary: Annotated[str, Field(max_length=SUMMARY_MAX_LENGTH)]
     analyses: Annotated[list[Analysis], Field(min_length=1)]
     meta: Meta
 
