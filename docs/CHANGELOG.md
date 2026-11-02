@@ -886,3 +886,61 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Sprint 5: hasta entonces, un `LLM_PROVIDER` real termina en `ValueError` al crear el proveedor.
   - Sprint 4 (AC-10.6): la fixture de `contracts/fixtures/` con una instrucción inyectada que pide
     NFR-14. Por ahora, el test del mock lleva la instrucción en línea.
+
+## Sprint 3 — `triage_service`, reglas duras y caché (2026-11-01)
+- Hecho: el flujo de `04` §6.2 hasta donde `07` lo lleva en el Sprint 3, con AC-08.3 y AC-08.4 completos
+  y AC-08.1, AC-08.2 y AC-08.8 probados contra el servicio. Sin HTTP: el servicio lanza excepciones
+  propias y sigue sin haber ruta `/v1/triage`.
+  - `ai-service/app/domain/rules.py`: reglas 1, 2, 3, 5 y 6 de `06` A.1 y descarte de caché de AC-08.4 c.
+    La regla 4 ya la cumple `LlmCorrection`.
+  - `ai-service/app/services/cache.py`: clave de NFR-11 y LRU con TTL.
+  - `ai-service/app/services/triage_service.py`: caché, llamada, validación, reglas y `meta`.
+  - Cierra los cuatro pendientes de esta rama en la entrada anterior.
+- Decisión del owner (2026-11-01): "Apruebo crear ai-service/app/domain/rules.py, modificar
+  ai-service/app/domain/contracts.py para añadir las constantes de longitud, modificar docs/04 §6.2
+  (nota del paso 4 sobre el prompt de sistema vacío hasta el Sprint 5, alcance de los pasos 1, 3, 5 y 6
+  según docs/07, y recorte del paso 7 solo para textos con máximo), y añadir la entrada al CHANGELOG,
+  en esta rama y hasta ~450 líneas sin tests."
+- Decisión del owner (2026-11-01): "Apruebo modificar docs/09 §7.4 para que remita a la excepción de la
+  tabla fija de AC-17.2, y corregir en docs/CHANGELOG.md la línea de D99 para que diga \u003c."
+- Decisiones:
+  - D104: sin `prompts/triage_v1.md`, el prompt de sistema va vacío. Solo es aceptable porque
+    `create_provider` únicamente construye el mock, que lo ignora: un proveedor real no puede llegar a
+    ese código. | Alternativa: un borrador con ese nombre, que quedaría 🔴 al llegar a `main` y
+    adelantaría el Sprint 5. | Reversible: sí.
+  - D105: se sigue a `07` donde `04` §6.2 describe más: plazo total, tope diario, `asyncio.timeout` y
+    reparación son del Sprint 5. Con el mock nada de eso puede ocurrir. Las excepciones del proveedor
+    se propagan hasta el "mapeo de errores del SDK" del Sprint 5. | Reversible: sí.
+  - D106: `suggestedHumanAction` no se recorta: `06` y el contrato no le fijan máximo, y añadirlo
+    cambiaría el contrato. Lo acota `LLM_MAX_OUTPUT_TOKENS`. | Reversible: sí.
+  - D107: `meta.llmCalls` es 0 con el mock, también si no hay acierto de caché: `06` cuenta "llamadas
+    reales al LLM" y su ejemplo con mock dice 0. AC-08.6 cuenta por `cacheHit`, así que el presupuesto
+    no cambia. | Reversible: sí.
+  - D108: AC-08.4 c usa contención literal sin distinguir mayúsculas, sobre valores no vacíos. Un
+    valor corto como `"1"` descarta un texto con `2010`, y eso solo cuesta una llamada; limitar por
+    palabra podría dejar pasar un valor. Sin `sourceHeader`, la columna propia cuenta como ajena.
+    | Reversible: sí.
+  - D109: `analyses` distintas de las violaciones (conjunto, orden o `field`) son salida inválida y no
+    se guardan: ninguna regla lo arregla. Una `correction` con `originalValue` distinto de
+    `receivedValue`, o con `proposedValue` nulo fuera de `NULLIFY_TOKEN`, no es "válida" (`06` regla 3)
+    y va a humano. Cualquier `NEEDS_HUMAN_REVIEW` pierde su `correction`, y si no trae acción recibe un
+    texto fijo es/en, porque `Analysis` la exige. | Reversible: sí.
+  - D110: `explanation` y `summary` se recortan contando caracteres, sin puntos suspensivos y antes de
+    guardar en caché. La plantilla de `summary` de un acierto usa las mismas frases que el mock, de
+    modo que con mock solo `meta` distingue un acierto de un fallo (NFR-13). | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/rules.py` (nuevo), `ai-service/app/domain/contracts.py` (constantes, sin cambio
+  en la spec), `docs/04-arquitectura.md` (§6.2), `docs/09-reglas-para-agentes-ia.md` (§7.4).
+- Pendiente:
+  - Rama `feat/FR-08-triage-route`: la ruta `POST /v1/triage`, `errors.py`, `ProblemDetail`, `main.py`,
+    `cache.entries` en `system.py`, el cambio en `contract_export.py` y la spec; el test de que el
+    export es igual a `app.openapi()` puro; las respuestas HTTP de AC-08.8, AC-08.1 y AC-08.2;
+    `LlmInvalidOutputError` → `502 LLM_INVALID_OUTPUT`; `503` para un proveedor real;
+    `400 INVALID_REQUEST` si `requestId` difiere de `X-Request-Id`. El owner aceptó las decisiones de
+    esa rama con dos correcciones: la spec declara todos los códigos de `06` A.5, también 429 y 504, y
+    la fila 500 lleva todas sus columnas, alineada con NFR-07.
+  - Sprint 4: riesgo de NFR-13. La caché de `ai-service` sobrevive a una base limpia si no se reinicia
+    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Sin
+    resolver.
+  - Sprint 5: cumplir `09` §7.11 con `triage_v1.md` antes de añadir un proveedor real; contar
+    `llmCalls` reales; plazo total, `asyncio.timeout`, tope diario, reparación y mapeo de errores.
