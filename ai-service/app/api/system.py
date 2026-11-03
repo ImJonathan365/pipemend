@@ -45,6 +45,11 @@ class InfoResponse(ContractModel):
 
 @router.get("/health", summary="Liveness and provider status")
 def health(settings: SettingsDep) -> HealthResponse:
+    """Always HTTP 200 while the process is alive.
+
+    The compose healthcheck only proves the service answers (docs/06 A.3). A real provider
+    without an API key is reported as `degraded` instead of failing (AC-17.3).
+    """
     configured = settings.provider_configured
     return HealthResponse(
         status="ok" if configured else "degraded",
