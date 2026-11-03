@@ -3,6 +3,7 @@
 import pytest
 
 from app.config import LlmProvider, Settings
+from app.providers.base import ProviderNotConfiguredError
 from app.providers.factory import create_provider
 from app.providers.mock import MockProvider
 
@@ -15,5 +16,5 @@ def test_the_default_provider_is_the_mock() -> None:
 def test_a_real_provider_is_refused_by_name(provider: LlmProvider) -> None:
     settings = Settings(llm_provider=provider, llm_api_key="not-a-real-key")
 
-    with pytest.raises(ValueError, match=provider.value):
+    with pytest.raises(ProviderNotConfiguredError, match=provider.value):
         create_provider(settings)
