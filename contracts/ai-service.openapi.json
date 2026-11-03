@@ -7,8 +7,8 @@
             "$ref": "#/components/schemas/Classification"
           },
           "confidence": {
-            "maximum": 1,
-            "minimum": 0,
+            "maximum": 1.0,
+            "minimum": 0.0,
             "title": "Confidence",
             "type": "number"
           },
@@ -170,7 +170,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Allowedvalues"
           },
           "decimalSeparator": {
@@ -182,20 +181,18 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Decimalseparator"
           },
           "expectedColumns": {
             "anyOf": [
               {
-                "minimum": 1,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Expectedcolumns"
           },
           "format": {
@@ -207,7 +204,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Format"
           },
           "max": {
@@ -219,7 +215,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Max"
           },
           "maxLength": {
@@ -231,7 +226,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Maxlength"
           },
           "min": {
@@ -243,7 +237,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Min"
           },
           "pattern": {
@@ -255,20 +248,18 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Pattern"
           },
           "receivedColumns": {
             "anyOf": [
               {
-                "minimum": 0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Receivedcolumns"
           },
           "rule": {
@@ -280,7 +271,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Rule"
           },
           "scale": {
@@ -292,7 +282,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Scale"
           },
           "type": {
@@ -304,7 +293,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Type"
           }
         },
@@ -412,7 +400,7 @@
           "inputTokens": {
             "anyOf": [
               {
-                "minimum": 0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -422,12 +410,12 @@
             "title": "Inputtokens"
           },
           "latencyMs": {
-            "minimum": 0,
+            "minimum": 0.0,
             "title": "Latencyms",
             "type": "integer"
           },
           "llmCalls": {
-            "minimum": 0,
+            "minimum": 0.0,
             "title": "Llmcalls",
             "type": "integer"
           },
@@ -438,7 +426,7 @@
           "outputTokens": {
             "anyOf": [
               {
-                "minimum": 0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -518,7 +506,7 @@
             "type": "object"
           },
           "sourceRowNumber": {
-            "minimum": 1,
+            "minimum": 1.0,
             "title": "Sourcerownumber",
             "type": "integer"
           }
@@ -620,7 +608,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Explanationlanguage"
           }
         },
@@ -643,8 +630,7 @@
               {
                 "type": "null"
               }
-            ],
-            "default": null
+            ]
           },
           "record": {
             "$ref": "#/components/schemas/Record"
@@ -738,7 +724,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Exceptiontype"
           },
           "expected": {
@@ -768,7 +753,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Sourceheader"
           },
           "technicalMessage": {
@@ -843,6 +827,694 @@
         "summary": "Active provider, model and prompt versions",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/v1/triage": {
+      "post": {
+        "description": "AC-08.1. It only proposes: the policy in pipeline-service decides (ADR-0003).",
+        "operationId": "triage_v1_triage_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Request-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "INVALID_REQUEST"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "RATE_LIMITED or LLM_BUDGET_EXHAUSTED"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "INTERNAL_ERROR"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "LLM_INVALID_OUTPUT or LLM_PROVIDER_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PROVIDER_NOT_CONFIGURED"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 with the extensions of docs/06 A.5 and NFR-20.",
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "errors": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "description": "Where and of what kind, never what: a validation message can quote a value of the row.",
+                            "properties": {
+                              "loc": {
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer"
+                                    }
+                                  ]
+                                },
+                                "title": "Loc",
+                                "type": "array"
+                              },
+                              "type": {
+                                "title": "Type",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "loc",
+                              "type"
+                            ],
+                            "title": "ProblemFieldError",
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Errors"
+                    },
+                    "instance": {
+                      "title": "Instance",
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "title": "Requestid",
+                      "type": "string"
+                    },
+                    "status": {
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail",
+                    "instance",
+                    "code",
+                    "requestId"
+                  ],
+                  "title": "ProblemDetail",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "LLM_TIMEOUT"
+          }
+        },
+        "summary": "Analyse one invalid record",
+        "tags": [
+          "triage"
         ]
       }
     }

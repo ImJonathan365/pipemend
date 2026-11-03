@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app import __version__
 from app.config import Settings, get_settings
@@ -45,11 +45,6 @@ class InfoResponse(ContractModel):
 
 @router.get("/health", summary="Liveness and provider status")
 def health(settings: SettingsDep) -> HealthResponse:
-    """Always HTTP 200 while the process is alive.
-
-    The compose healthcheck only proves the service answers (docs/06 A.3). A real provider
-    without an API key is reported as `degraded` instead of failing (AC-17.3).
-    """
     configured = settings.provider_configured
     return HealthResponse(
         status="ok" if configured else "degraded",
@@ -59,7 +54,7 @@ def health(settings: SettingsDep) -> HealthResponse:
 
 
 @router.get("/v1/info", summary="Active provider, model and prompt versions")
-def info(settings: SettingsDep) -> InfoResponse:
+def info(settings: SettingsDep, request: Request) -> InfoResponse:
     """AC-17.5. Never exposes the API key, only whether a provider is configured."""
     return InfoResponse(
         service="pipemend-ai-service",
@@ -70,10 +65,12 @@ def info(settings: SettingsDep) -> InfoResponse:
             triage=settings.prompt_version_triage,
             schema_drift=settings.prompt_version_schema,
         ),
-        # `entries` and `llmCallsToday` are real counters from Sprint 3 (LRU cache, NFR-11) and
-        # Sprint 5 (daily cap, AC-08.8). Nothing counts yet, so zero is the truthful answer, not
-        # a placeholder for a feature pretending to exist.
-        cache=CacheInfo(entries=0, max_entries=settings.triage_cache_max_entries),
+        cache=CacheInfo(
+            entries=len(request.app.state.triage_cache),
+            max_entries=settings.triage_cache_max_entries,
+        ),
+        # A real counter from Sprint 5 (daily cap, AC-08.8). Nothing counts yet, so zero is the
+        # truthful answer, not a placeholder for a feature pretending to exist.
         limits=LimitsInfo(
             request_deadline_seconds=settings.ai_request_deadline_seconds,
             max_llm_calls_per_day=settings.llm_max_calls_per_day,
