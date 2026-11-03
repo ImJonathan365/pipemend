@@ -29,7 +29,7 @@ Base URL interna: `http://ai-service:8000`
 | Header | Obligatorio | Descripción |
 |---|---|---|
 | `Content-Type: application/json` | Sí | |
-| `X-Request-Id` | Sí | UUID generado por el pipeline; se devuelve igual en la respuesta |
+| `X-Request-Id` | Sí | UUID generado por el pipeline; se devuelve igual en la respuesta. Si falta, `ai-service` genera uno; si no es un UUID, responde `422 VALIDATION_ERROR` <!-- owner, 2026-11-03 --> |
 | `X-Batch-Id` | Sí | UUID del lote, solo para logs |
 
 ## A.1 `POST /v1/triage`
@@ -327,14 +327,17 @@ Regla general (NFR-07): el pipeline **no** reintenta errores que traen `code` de
 | HTTP | `code` | Cuándo | ¿Pipeline reintenta? | ¿Cuenta para el circuit breaker? | Resultado en el pipeline |
 |---|---|---|---|---|---|
 | 400 | `INVALID_REQUEST` | Request que no cumple el contrato (semántica) | No | No | `AI_INVALID_RESPONSE` + log `ERROR` (indica bug de contrato) |
+| 404 | `NOT_FOUND` | Ruta que no existe <!-- owner, 2026-11-03 --> | No | No | igual que 400 |
+| 405 | `METHOD_NOT_ALLOWED` | Método que la ruta no admite; conserva la cabecera `Allow` <!-- owner, 2026-11-03 --> | No | No | igual que 400 |
 | 422 | `VALIDATION_ERROR` | Validación de FastAPI/Pydantic | No | No | igual que 400 |
 | 429 | `RATE_LIMITED` | El proveedor limitó y el reintento interno no alcanzó | No | Sí | `AI_UNAVAILABLE` |
 | 429 | `LLM_BUDGET_EXHAUSTED` | Se alcanzó `LLM_MAX_CALLS_PER_DAY` (AC-08.8) | No | No | `AI_BUDGET_EXCEEDED`; el presupuesto del lote se marca agotado |
+| 500 | `INTERNAL_ERROR` | Error inesperado de `ai-service`; el `detail` nunca describe la causa <!-- owner, 2026-11-03 --> | No | Sí | `AI_UNAVAILABLE` |
 | 502 | `LLM_INVALID_OUTPUT` | Salida del LLM inválida tras reparación | No (con `temperature = 0` repetir da la misma salida) | No | `AI_INVALID_RESPONSE` |
 | 502 | `LLM_PROVIDER_ERROR` | Error del proveedor (5xx, auth) | No | Sí | `AI_UNAVAILABLE` |
 | 503 | `PROVIDER_NOT_CONFIGURED` | Falta API key u otra config | No | Sí (abre rápido el circuito) | `AI_UNAVAILABLE` |
 | 504 | `LLM_TIMEOUT` | Se agotó el plazo `AI_REQUEST_DEADLINE_SECONDS` | No | Sí | `AI_UNAVAILABLE` |
-| — | (transporte) | Conexión rechazada / timeout de conexión / 5xx sin `problem+json` | Sí (2, backoff) | Sí | `AI_UNAVAILABLE` |
+| — | (transporte) | Conexión rechazada / timeout de conexión / 502/503/504 sin `problem+json` <!-- owner, 2026-11-03 --> | Sí (2, backoff) | Sí | `AI_UNAVAILABLE` |
 | — | (transporte) | *Read timeout* del pipeline | No | Sí | `AI_UNAVAILABLE` |
 
 Ejemplo:
@@ -352,6 +355,12 @@ Ejemplo:
 ```
 
 (El dominio en `type` es ilustrativo; no necesita resolver.)
+
+En `422`, `detail` sigue siendo un texto y la extensión `errors` dice dónde falló la validación y de qué tipo, sin repetir lo recibido: nunca lleva `msg`, `input` ni `ctx`, y `loc` se corta en `body.record.raw`, porque las claves de `record.raw` son cabeceras del archivo. Ningún otro error lleva `errors`. <!-- owner, 2026-11-03 -->
+
+```json
+{ "errors": [ { "loc": ["body", "violations", 0, "errorCode"], "type": "enum" } ] }
+```
 
 ---
 

@@ -16,6 +16,10 @@ class ProviderResult:
     usage: Usage | None
 
 
+class ProviderNotConfiguredError(Exception):
+    """A provider that cannot run: no API key (AC-17.3) or not implemented yet (Sprint 5)."""
+
+
 class LLMProvider(Protocol):
     # async because the triage endpoint must never block the event loop (NFR-10, docs/09 7.6). The
     # caller bounds the call with asyncio.timeout, so the timeout is not part of this signature.

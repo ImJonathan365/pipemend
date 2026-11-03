@@ -188,6 +188,27 @@ class Analysis(ContractModel):
         return self
 
 
+class ProblemFieldError(ContractModel):
+    """Where and of what kind, never what: a validation message can quote a value of the row."""
+
+    loc: list[str | int]
+    type: str
+
+
+class ProblemDetail(ContractModel):
+    """RFC 9457 with the extensions of docs/06 A.5 and NFR-20."""
+
+    type: str
+    title: str
+    status: int
+    detail: str
+    instance: str
+    code: str
+    # What the caller sent as X-Request-Id, which need not be a UUID when that is the error.
+    request_id: str
+    errors: list[ProblemFieldError] | None = None
+
+
 class Meta(ContractModel):
     """Traceability of the answer (NFR-12). `model` is whatever LLM_MODEL holds."""
 

@@ -222,6 +222,7 @@ ai-service/app
 ├── api/
 │   ├── triage.py         # POST /v1/triage
 │   ├── schema_drift.py   # POST /v1/schema-drift/analyze
+│   ├── errors.py         # Errores problem+json (NFR-20, `06` A.5)
 │   └── system.py         # GET /health, GET /v1/info
 ├── domain/
 │   ├── contracts.py      # Modelos Pydantic del contrato (fuente de la OpenAPI)

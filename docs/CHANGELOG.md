@@ -944,3 +944,61 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     resolver.
   - Sprint 5: cumplir `09` §7.11 con `triage_v1.md` antes de añadir un proveedor real; contar
     `llmCalls` reales; plazo total, `asyncio.timeout`, tope diario, reparación y mapeo de errores.
+
+## Sprint 3 — Ruta `POST /v1/triage` y errores (2026-11-03)
+- Hecho: FR-08 por HTTP (AC-08.1, AC-08.2, AC-08.8 y un segundo envío idéntico con `cacheHit = true`),
+  AC-17.3 y NFR-20 en `ai-service`, con los códigos de `06` A.5 declarados en la spec.
+  - `ai-service/app/api/triage.py`: ruta `async def`.
+  - `ai-service/app/api/errors.py`: `problem+json`, también para 404 y 405.
+  - `contract_export.py` ya no añade nada: la spec es `app.openapi()`.
+  - `cache.entries` de `GET /v1/info` es real.
+- Decisión del owner (2026-11-03): "Apruebo modificar ai-service/app/domain/contracts.py para añadir
+  ProblemDetail, regenerar contracts/ai-service.openapi.json con la ruta POST /v1/triage y los códigos
+  de 06 A.5 como esquema inline, aceptando que los esquemas existentes pierdan únicamente sus default
+  null al pasar a app.openapi() puro; modificar docs/06 A.5 para añadir la fila 500 INTERNAL_ERROR,
+  alinear la fila de transporte a 502/503/504 sin problem+json y aclarar en las cabeceras que un
+  X-Request-Id ausente se genera y uno que no es UUID da 422; modificar docs/03 NFR-07 para añadir 500
+  a la lista de fallas del circuit breaker, sin cambiar sus reintentos; modificar el árbol de docs/04
+  §6.2 para añadir errors.py; capturar Exception en el middleware para responder 500 INTERNAL_ERROR;
+  responder 404 y 405 en problem+json con NOT_FOUND y METHOD_NOT_ALLOWED en ai-service, documentándolo
+  en 06 A.5; cambiar en test_provider_factory.py el ValueError por la excepción propia; y añadir la
+  entrada al CHANGELOG."
+- Corrección: **D97 estaba equivocada.** Decía que los esquemas añadidos se generaban como los generaría
+  FastAPI 0.141.1 cuando existiera la ruta, y lo apoyaba en `get_definitions`. Faltó el último paso de
+  `get_openapi` (`fastapi/openapi/utils.py:679`), con `exclude_none=True`, que quita todo `default: null`.
+  Con la ruta puesta y el añadido todavía en el código, el test de igualdad falló:
+  `ValueError: schema Expected already exists with another definition`. La entrada de D97 no se reescribe.
+- Decisiones:
+  - D111: la spec pasa a ser `app.openapi()` puro y sus esquemas pierden 16 `default: null` (12 en
+    `Expected`, 2 en `Violation`, 1 en `TriageOptions`, 1 en `TriageRequest`). `required`, tipos y enums
+    no cambian. Comprobado una vez contra `dev`: sin esos `default`, los 23 esquemas y las rutas
+    existentes son idénticos. | Reversible: sí.
+  - D112: un `X-Request-Id` que no es UUID da `422 VALIDATION_ERROR`, por el tipo de la cabecera; si
+    falta, no hay error. `requestId` del error repite lo recibido, así que en `ProblemDetail` es texto.
+    | Reversible: sí.
+  - D113: `ProblemDetail` va inline en cada código y se genera desde el modelo, con sus `$defs` resueltos.
+    `model` en `responses` declararía también `application/json`, que es falso. | Reversible: sí.
+  - D114: el 500 se responde desde el middleware y no desde un handler de `Exception`, que Starlette
+    ejecuta fuera del middleware, sin `X-Request-Id`, y relanza. El log `ERROR` lleva tipo y líneas del
+    traceback, sin el mensaje, que podría citar la fila (NFR-08). | Reversible: sí.
+  - D115: `detail` siempre es texto. El 422 añade `errors: [{loc, type}]`, sin `msg`, `input` ni `ctx`, y
+    con `loc` cortado en `body.record.raw`. | Reversible: sí.
+  - D116: `ProviderNotConfiguredError` reemplaza al `ValueError` de D102, porque `read_context` también
+    lanza `ValueError` y un fallo interno sería un 503. Da 503 sin key (AC-17.3) y con un proveedor
+    real aún sin implementar. | Reversible: sí.
+  - D117: una caché por `create_app()`, en `app.state`, creada al arrancar. Su tamaño sale de
+    `get_settings()` aunque un test sustituya esa dependencia. | Reversible: sí.
+  - D118: 404 y 405 usan como `code` el nombre del estado, igual que `06` Parte B, y el 405 conserva
+    `Allow`. En A.5 sus columnas dicen "igual que 400": no reintenta, no cuenta para el circuit breaker
+    y `AI_INVALID_RESPONSE`. NFR-07 no los nombra. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/contracts.py`, `contracts/ai-service.openapi.json`,
+  `docs/06-contrato-api.md` (cabeceras y A.5), `docs/03-requisitos-no-funcionales.md` (NFR-07),
+  `docs/04-arquitectura.md` (§6.2).
+- Test existente modificado (con aprobación explícita del owner): `test_provider_factory.py` espera
+  `ProviderNotConfiguredError` en lugar de `ValueError`, con el mismo `match`.
+- Pendiente:
+  - Sprint 4: el pipeline trata 500 como `AI_UNAVAILABLE`, sin reintento y contando para el circuit
+    breaker (`06` A.5). Esta rama no lleva código de reintentos.
+  - Sprint 5: hasta entonces, un `LLM_PROVIDER` real con key da `/health` `ok`, pero `/v1/triage`
+    responde 503. La spec ya declara 429 y 504, que hasta entonces no se emiten.
