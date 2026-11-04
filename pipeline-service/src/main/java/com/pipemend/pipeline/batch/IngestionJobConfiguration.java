@@ -7,6 +7,7 @@ import com.pipemend.pipeline.persistence.SalesTransactionWriter;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.DisabledAiTriagePort;
+import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -172,12 +173,18 @@ public class IngestionJobConfiguration {
     @Bean
     @StepScope
     ItemProcessor<RawRecord, ProcessedRecord> recordProcessor(
-            SchemaDefinition schema, Validator validator, @Value("#{jobParameters['batchId']}") String batchId) {
+            SchemaDefinition schema,
+            Validator validator,
+            IngestionBatchRepository batches,
+            @Value("#{jobParameters['batchId']}") String batchId) {
+        UUID id = UUID.fromString(batchId);
+        IngestionBatchRepository.BatchSource source = batches.source(id);
         return new RecordProcessor(
-                UUID.fromString(batchId),
+                id,
                 schema,
                 validator,
                 new SalesTransactionTransformer(schema),
+                new TriageRequestBuilder(id, schema, source.filename(), source.type()),
                 new DisabledAiTriagePort());
     }
 

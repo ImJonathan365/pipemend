@@ -1,6 +1,7 @@
 package com.pipemend.pipeline.batch;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.assertj.core.api.Assertions.tuple;
 
 import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
@@ -9,9 +10,13 @@ import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.DisabledAiTriagePort;
+import com.pipemend.pipeline.triage.TriageOutcome;
+import com.pipemend.pipeline.triage.contract.TriageRequest;
 import com.pipemend.pipeline.validation.ErrorCode;
 import com.pipemend.pipeline.validation.Validator;
 import com.pipemend.pipeline.validation.Violation;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -28,7 +33,7 @@ class RecordProcessorTest {
 
     @Test
     void ac_06_1_aValidRecordIsLoadedDirectWithoutTriage() {
-        AiTriagePort failIfCalled = (record, violations) -> {
+        AiTriagePort failIfCalled = request -> {
             throw new AssertionError("a valid record must not reach the AI");
         };
 
@@ -74,7 +79,7 @@ class RecordProcessorTest {
     @Test
     void ac_01_5_aMalformedRowIsQuarantinedWithItsRawLine() {
         ProcessedRecord result =
-                processor.process(new RawRecord.Malformed(9, "a,b,c,d,e,f,g,h,i", "Expected 8 columns, found 9"));
+                processor.process(new RawRecord.Malformed(9, "a,b,c,d,e,f,g,h,i", "Expected 8 columns, found 9", 8, 9));
 
         assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
             assertThat(q.reason()).isEqualTo(QuarantineReason.AI_UNAVAILABLE);
@@ -82,7 +87,45 @@ class RecordProcessorTest {
             assertThat(q.violations())
                     .extracting(Violation::field, Violation::errorCode, Violation::technicalMessage)
                     .containsExactly(tuple(Validator.RECORD, ErrorCode.MALFORMED_ROW, "Expected 8 columns, found 9"));
+            assertThat(q.violations().getFirst().expected())
+                    .containsOnly(entry("expectedColumns", 8), entry("receivedColumns", 9));
         });
+    }
+
+    @Test
+    void ac_07_4_aStrayQuoteLeavesReceivedColumnsPresentAndNull() {
+        ProcessedRecord.Quarantined q = (ProcessedRecord.Quarantined)
+                processor.process(new RawRecord.Malformed(9, "1,5\" TILE", "A stray quote", 8, null));
+
+        assertThat(q.violations().getFirst().expected())
+                .containsOnlyKeys("expectedColumns", "receivedColumns")
+                .containsEntry("expectedColumns", 8)
+                .containsEntry("receivedColumns", null);
+    }
+
+    @Test
+    void ac_07_1_thePortReceivesTheRequestOfTheRecordWithAnIdOfItsOwn() {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put("Country", "Atlantis");
+        List<TriageRequest> requests = new ArrayList<>();
+        AiTriagePort capture = request -> {
+            requests.add(request);
+            return new TriageOutcome.Unavailable("captured");
+        };
+        RecordProcessor capturing = processor(SchemaTestSupport.realSchema(), capture);
+
+        capturing.process(new RawRecord.Parsed(6, row));
+        capturing.process(new RawRecord.Parsed(7, row));
+
+        assertThat(requests).hasSize(2);
+        TriageRequest first = requests.getFirst();
+        assertThat(first.batchId()).isEqualTo(BATCH);
+        assertThat(first.record().sourceRowNumber()).isEqualTo(6);
+        assertThat(first.record().raw()).isEqualTo(row);
+        assertThat(first.violations())
+                .extracting(TriageRequest.Violation::field)
+                .containsExactly("country");
+        assertThat(first.requestId()).isNotEqualTo(requests.getLast().requestId());
     }
 
     @Test
@@ -103,7 +146,7 @@ class RecordProcessorTest {
     void anExceptionAfterValidationKeepsTheViolationsItFound() {
         Map<String, String> row = RecordTestSupport.validRow();
         row.put("Country", "Atlantis");
-        AiTriagePort broken = (record, violations) -> {
+        AiTriagePort broken = request -> {
             throw new IllegalStateException("boom");
         };
 

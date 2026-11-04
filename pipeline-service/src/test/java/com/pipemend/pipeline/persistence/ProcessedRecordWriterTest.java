@@ -129,16 +129,40 @@ class ProcessedRecordWriterTest {
 
     @Test
     void ac_11_2_aMalformedRowKeepsItsRawLineAndATechnicalSummary() throws Exception {
-        write(process(schema, new RawRecord.Malformed(3, "1,2,3", "Expected 8 columns, found 3")));
+        write(process(schema, new RawRecord.Malformed(3, "1,2,3", "Expected 8 columns, found 3", 8, 3)));
 
-        Map<String, Object> row = jdbc.sql(
-                        "SELECT raw_payload::text AS raw, summary FROM quarantine_record WHERE batch_id = :id")
-                .param("id", batchId)
-                .query()
-                .singleRow();
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT raw_payload::text AS raw, summary, violations->0->'expected' #>> '{}' AS expected
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
         assertThat(json.readValue((String) row.get("raw"), new TypeReference<Map<String, String>>() {}))
                 .isEqualTo(Map.of("_rawLine", "1,2,3"));
         assertThat((String) row.get("summary")).contains("_record MALFORMED_ROW (Expected 8 columns, found 3)");
+        assertThat(json.readValue((String) row.get("expected"), new TypeReference<Map<String, Object>>() {}))
+                .isEqualTo(Map.of("expectedColumns", 8, "receivedColumns", 3));
+    }
+
+    @Test
+    void ac_07_4_aLongRawLineStaysWholeInQuarantine() throws Exception {
+        String line = "x".repeat(5000);
+
+        write(process(schema, new RawRecord.Malformed(3, line, "A stray quote", 8, null)));
+
+        String raw = jdbc.sql("SELECT raw_payload::text FROM quarantine_record WHERE batch_id = :id")
+                .param("id", batchId)
+                .query(String.class)
+                .single();
+        assertThat(json.readValue(raw, new TypeReference<Map<String, String>>() {}))
+                .isEqualTo(Map.of("_rawLine", line));
+    }
+
+    @Test
+    void ac_07_1_theSourceOfTheRequestComesFromTheBatch() {
+        IngestionBatchRepository.BatchSource source =
+                new IngestionBatchRepository(jdbc, RecordTestSupport.CLOCK).source(batchId);
+
+        assertThat(source.type()).isEqualTo("CSV");
+        assertThat(source.filename()).isNotBlank();
     }
 
     @Test
@@ -149,7 +173,7 @@ class ProcessedRecordWriterTest {
         write(
                 process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow())),
                 process(schema, new RawRecord.Parsed(2, invalid)),
-                process(schema, new RawRecord.Malformed(3, "x", "Expected 8 columns, found 1")));
+                process(schema, new RawRecord.Malformed(3, "x", "Expected 8 columns, found 1", 8, 1)));
 
         assertThat(rowNumbers("sales_transaction")).containsExactly(1);
         assertThat(rowNumbers("quarantine_record")).containsExactly(2, 3);

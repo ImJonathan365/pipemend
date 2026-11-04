@@ -7,10 +7,13 @@ import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
+import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.ErrorCode;
 import com.pipemend.pipeline.validation.Validator;
 import com.pipemend.pipeline.validation.Violation;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +31,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     private final SchemaDefinition schema;
     private final Validator validator;
     private final SalesTransactionTransformer transformer;
+    private final TriageRequestBuilder requests;
     private final AiTriagePort triage;
 
     public RecordProcessor(
@@ -35,11 +39,13 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
             SchemaDefinition schema,
             Validator validator,
             SalesTransactionTransformer transformer,
+            TriageRequestBuilder requests,
             AiTriagePort triage) {
         this.batchId = batchId;
         this.schema = schema;
         this.validator = validator;
         this.transformer = transformer;
+        this.requests = requests;
         this.triage = triage;
     }
 
@@ -70,7 +76,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     }
 
     private ProcessedRecord triage(RawRecord record, List<Violation> violations) {
-        return switch (triage.triage(record, violations)) {
+        return switch (triage.triage(requests.build(UUID.randomUUID(), record, violations))) {
             case TriageOutcome.Unavailable unavailable ->
                 quarantine(
                         record,
@@ -84,7 +90,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
             RawRecord record, List<Violation> violations, QuarantineReason reason, String summary) {
         Map<String, String> payload = switch (record) {
             case RawRecord.Parsed parsed -> parsed.valuesByHeader();
-            case RawRecord.Malformed malformed -> Map.of("_rawLine", malformed.rawLine());
+            case RawRecord.Malformed malformed -> Map.of(TriageRequestBuilder.RAW_LINE, malformed.rawLine());
         };
         return new ProcessedRecord.Quarantined(batchId, record.sourceRowNumber(), payload, violations, reason, summary);
     }
@@ -98,7 +104,18 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     }
 
     private static Violation malformedRow(RawRecord.Malformed record) {
-        return new Violation(Validator.RECORD, null, ErrorCode.MALFORMED_ROW, null, Map.of(), record.reason(), null);
+        // Not Map.of: a null receivedColumns is part of the contract (D96).
+        Map<String, Object> expected = new LinkedHashMap<>();
+        expected.put("expectedColumns", record.expectedColumns());
+        expected.put("receivedColumns", record.receivedColumns());
+        return new Violation(
+                Validator.RECORD,
+                null,
+                ErrorCode.MALFORMED_ROW,
+                null,
+                Collections.unmodifiableMap(expected),
+                record.reason(),
+                null);
     }
 
     /** The technical summary of AC-11.2, written by the pipeline without AI. */

@@ -75,16 +75,19 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
         }
         int number = records.getCurrentItemCount();
         Split split = split(line);
-        if (split.status() == Status.STRAY_QUOTE) {
-            return new RawRecord.Malformed(number, line, "A quote appears inside a field that does not start with one");
-        }
         List<String> names = headers();
+        if (split.status() == Status.STRAY_QUOTE) {
+            return new RawRecord.Malformed(
+                    number, line, "A quote appears inside a field that does not start with one", names.size(), null);
+        }
         if (split.fields().size() != names.size()) {
             return new RawRecord.Malformed(
                     number,
                     line,
                     "Expected " + names.size() + " columns, found "
-                            + split.fields().size());
+                            + split.fields().size(),
+                    names.size(),
+                    split.fields().size());
         }
         Map<String, String> byHeader = new LinkedHashMap<>();
         for (int i = 0; i < names.size(); i++) {
