@@ -251,10 +251,7 @@ public final class Validator {
 
     private Optional<Violation> violation(
             FieldSpec field, ErrorCode code, String value, String message, String exceptionType) {
-        String technical = message == null ? code.name() : message;
-        if (technical.length() > MAX_MESSAGE_LENGTH) {
-            technical = technical.substring(0, MAX_MESSAGE_LENGTH);
-        }
+        String technical = Text.truncate(message == null ? code.name() : message, MAX_MESSAGE_LENGTH);
         return Optional.of(new Violation(
                 field.name(), field.sourceHeader(), code, value, expected.get(field.name()), technical, exceptionType));
     }

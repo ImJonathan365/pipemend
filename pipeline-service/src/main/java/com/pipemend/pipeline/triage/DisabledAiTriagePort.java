@@ -1,8 +1,6 @@
 package com.pipemend.pipeline.triage;
 
-import com.pipemend.pipeline.batch.RawRecord;
-import com.pipemend.pipeline.validation.Violation;
-import java.util.List;
+import com.pipemend.pipeline.triage.contract.TriageRequest;
 
 /**
  * Stands in until the HTTP client exists (docs/07, Sprint 2): every invalid record is quarantined with
@@ -11,7 +9,7 @@ import java.util.List;
 public final class DisabledAiTriagePort implements AiTriagePort {
 
     @Override
-    public TriageOutcome triage(RawRecord record, List<Violation> violations) {
+    public TriageOutcome triage(TriageRequest request) {
         return new TriageOutcome.Unavailable("AI triage is not enabled in this build");
     }
 }
