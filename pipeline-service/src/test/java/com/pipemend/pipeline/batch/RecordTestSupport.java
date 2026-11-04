@@ -8,6 +8,7 @@ import com.pipemend.pipeline.schema.SchemaLoader;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiTriagePort;
+import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
 import java.time.Clock;
 import java.time.Instant;
@@ -38,7 +39,12 @@ public final class RecordTestSupport {
 
     public static RecordProcessor processor(UUID batchId, SchemaDefinition schema, AiTriagePort triage) {
         return new RecordProcessor(
-                batchId, schema, new Validator(schema, CLOCK), new SalesTransactionTransformer(schema), triage);
+                batchId,
+                schema,
+                new Validator(schema, CLOCK),
+                new SalesTransactionTransformer(schema),
+                new TriageRequestBuilder(batchId, schema, "dirty.csv", "CSV"),
+                triage);
     }
 
     /** The real schema with unit_price at scale 3, so "2.555" passes validation and reaches the transformer. */
