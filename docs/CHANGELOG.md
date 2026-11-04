@@ -1002,3 +1002,48 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     breaker (`06` A.5). Esta rama no lleva código de reintentos.
   - Sprint 5: hasta entonces, un `LLM_PROVIDER` real con key da `/health` `ok`, pero `/v1/triage`
     responde 503. La spec ya declara 429 y 504, que hasta entonces no se emiten.
+
+## Sprint 3 — Contexto de FR-07 y petición de triage en el pipeline (2026-11-04)
+- Hecho: FR-07 (AC-07.2, AC-07.3, AC-07.4; AC-07.1 parcial, ver D121) y el DTO de la petición de `06` A.1.
+  Sigue sin haber cliente HTTP: `DisabledAiTriagePort` recibe la petición y responde "no disponible".
+  - `triage/contract/TriageRequest.java` y `triage/TriageRequestBuilder.java`.
+  - `RawRecord.Malformed` lleva `expectedColumns` y `receivedColumns`, y el pipeline los emite en
+    `expected` y en `quarantine_record.violations` (D96).
+  - `validation/Text.truncate` recorta por code points; también lo usa `technicalMessage`.
+- Decisión del owner (2026-11-04): "Apruebo crear el DTO TriageRequest en
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/, que expected siga siendo un Map
+  en la petición, que AiTriagePort reciba TriageRequest, aplazar al Sprint 5 AI_REDACT_FIELDS y
+  AI_SEND_FULL_RECORD dejando AC-07.1 parcial, añadir la entrada al CHANGELOG, y cambiar
+  RawRecordReaderTest, RecordProcessorTest y ProcessedRecordWriterTest por las columnas de D96."
+- Decisión del owner (2026-11-04): "Apruebo modificar docs/03 NFR-07 para añadir 404 y 405 a lo que no
+  cuenta para el circuit breaker, en la primera rama del pipeline."
+- Decisiones:
+  - D119: `AiTriagePort` recibe `TriageRequest`, como `04` §4 (`triage(context)`). El builder ya corre
+    con cada registro inválido, y un fallo suyo termina en `PROCESSING_ERROR`. | Reversible: sí.
+  - D120: `expected` sigue siendo un `Map` en la petición, porque una clave ausente y un valor nulo
+    difieren en `receivedColumns`. Es la excepción a "DTO como `record`" de `04` §6.1. Un test compara
+    cada tipo de regla del YAML real con el esquema `Expected` de `contracts/ai-service.openapi.json`, sin
+    dependencias nuevas. | Reversible: sí.
+  - D121: `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD` se aplazan al Sprint 5 (`07`), y AC-07.1 queda
+    parcial. `customer_id` llega sin redactar a `ai-service`, que es local y cuyo mock no lee
+    `record.raw`. | Reversible: sí.
+  - D122: el límite de 1 000 de `technicalMessage` y el de 2 000 de `_rawLine` cuentan code points, como
+    `ai-service`, y nunca parten un emoji. `_rawLine` solo se recorta en la petición; `raw_payload`
+    queda íntegro. | Reversible: sí.
+  - D123: el pipeline no envía `explanationLanguage` (`options` es `null`), y `ai-service` usa
+    `AI_EXPLANATION_LANGUAGE`. `QuarantineWriter` reutiliza los ids de la petición, de modo que `v1` es
+    la misma violación en ambos lados. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `pipeline-service/.../triage/contract/TriageRequest.java` (nuevo), `docs/03-requisitos-no-funcionales.md`
+  (NFR-07), `docs/CHANGELOG.md`.
+- Tests existentes modificados (con aprobación explícita del owner): `RawRecordReaderTest`,
+  `RecordProcessorTest` y `ProcessedRecordWriterTest`, por las columnas de D96. También cambia
+  `RecordTestSupport`, el helper que construye el procesador.
+- Pendiente:
+  - Rama `feat/FR-08-response-validator`: `TriageResponse`, sus enums, `TriageJson`,
+    `TriageResponseValidator` y las 18 fixtures de respuesta. Aceptadas de forma provisional: el mapper
+    estricto, que además debe fallar con contenido tras el JSON, y las comprobaciones más allá de AC-08.7.
+  - Rama `feat/FR-08-triage-client`: `AI_REVIEW_REQUIRED` para un `AUTO_FIXABLE`, provisional hasta el
+    Sprint 4, y `ai_analysis` con el cuerpo recibido. Su plan revisa el riesgo de 30 s por fila y WireMock.
+  - **Condición previa del Sprint 5, junto a `09` §7.11:** ningún proveedor real antes de aplicar
+    `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD`.
