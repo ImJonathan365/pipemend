@@ -1051,3 +1051,43 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - **Condición previa del Sprint 5, junto a `09` §7.11:** ningún proveedor real antes de aplicar
     `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD`, incluido el envío sin `_rawLine` con
     `AI_SEND_FULL_RECORD=false`, y de documentar esa limitación en el README (AC-07.4).
+
+## Sprint 3 — `TriageResponse` y validación de la respuesta (2026-11-05)
+- Hecho: FR-08, AC-08.7 y la parte de formato de AC-12.3 (JSON inválido, enum desconocido, campos faltantes).
+  Nadie llama todavía a este código: lo cablea `feat/FR-08-triage-client`.
+  - `triage/contract/`: `TriageResponse`, `Severity`, `Classification`, `RootCause`, `Operation` y `TriageJson`.
+  - `triage/TriageResponseValidator.java`: clase pura. Las 18 fixtures de respuesta están asignadas: 4
+    válidas, 3 las rechaza `TriageJson` y 11 el validador, cada una por su motivo.
+- Decisión del owner (2026-11-05): "Apruebo crear en
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/ los DTO TriageResponse, sus enums
+  Severity, Classification, RootCause y Operation, y TriageJson como mapper estricto solo para la respuesta
+  de triage, que rechaza contenido tras el JSON y lanza una excepción propia sin el mensaje de Jackson; que
+  TriageResponseValidator aplique AC-08.7 más confidence en [0,1], acción no vacía en NEEDS_HUMAN_REVIEW,
+  proposedValue nulo solo con NULLIFY_TOKEN y los límites de summary, explanation y meta de docs/06; y añadir
+  la entrada al CHANGELOG."
+- Decisiones:
+  - D124: `TriageJson` es un mapper estático propio y no un bean. El `JsonMapper` de Boot 4.1.1 (Jackson 3.1.5)
+    acepta `"maxSeverity": 0` como `LOW`, convierte `"confidence": "0.97"` y `"summary": 5`, y con una clave
+    repetida gana la última; el resto de la aplicación lo sigue usando. | Alternativas: configurar el mapper
+    de Boot, que cambiaría a toda la aplicación. | Reversible: sí.
+  - D125: todas las claves son `required = true`, y los constructores rechazan el `null` donde la spec no lo
+    permite. Medido antes de escribir el código: `required` falla con la clave ausente y deja pasar el `null`
+    explícito, también en `correction`, `suggestedHumanAction`, `originalValue`, `proposedValue`, `inputTokens`
+    y `outputTokens`. | Reversible: sí.
+  - D126: `TriageJson` lanza una excepción con mensaje fijo y sin causa, porque el mensaje de Jackson puede citar
+    lo recibido. | Reversible: sí.
+  - D127: el validador devuelve `Valid` con `recordDecision` y `maxSeverity` calculados, o `Invalid` con todas
+    las incidencias, sin valores de la fila. El orden de `Severity` sostiene ese cálculo, y un test lo compara
+    con la spec en orden exacto. | Reversible: sí.
+  - D128: **los límites van más allá de AC-08.7**: `confidence` en [0,1], `summary` ≤ 1000 y `explanation` ≤ 800
+    en code points, `meta` no negativo, `proposedValue` nulo solo con `NULLIFY_TOKEN` y acción no en blanco. Salen
+    de `06` y son fallo cerrado. `ai-service` ya debe recortar esos textos (`06` regla 5), así que un texto largo
+    aquí indica un bug suyo. La acción es más estricta a propósito: `ai-service` solo rechaza la cadena vacía,
+    y aquí `"   "` también falla. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `triage/contract/TriageResponse.java`,
+  `Severity.java`, `Classification.java`, `RootCause.java`, `Operation.java`, `TriageJson.java` (nuevos) y
+  `docs/CHANGELOG.md`.
+- Pendiente:
+  - Rama `feat/FR-08-triage-client`: guardar la respuesta cruda truncada a 4 KB en `ai_call_log.error_detail`
+    (AC-12.3), porque `TriageJson` ya no da el motivo del fallo. Usar `Valid` para `recordDecision` y
+    `max_severity`, nunca lo recibido.
