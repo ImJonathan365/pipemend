@@ -1065,6 +1065,14 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   TriageResponseValidator aplique AC-08.7 más confidence en [0,1], acción no vacía en NEEDS_HUMAN_REVIEW,
   proposedValue nulo solo con NULLIFY_TOKEN y los límites de summary, explanation y meta de docs/06; y añadir
   la entrada al CHANGELOG."
+- Decisión del owner (2026-11-05): "Apruebo cambiar
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/TriageJson.java para que rechace la cadena
+  vacía o en blanco en campos numéricos y un cuerpo null con InvalidTriageJsonException, y añadir la nota al
+  CHANGELOG."
+- Corregido después de fusionar (hallado por el owner): `"inputTokens": ""` y `"   "`, igual que `outputTokens`,
+  se aceptaban y quedaban como `null`, aunque la spec solo admite entero o `null`; y `TriageJson.parse(null)` lanzaba
+  `IllegalArgumentException`. Ahora ambos lanzan `InvalidTriageJsonException`. El resto de las claves que no son
+  texto ya fallaba con `""` y `"   "`, y lo cubre un test.
 - Decisiones:
   - D124: `TriageJson` es un mapper estático propio y no un bean. El `JsonMapper` de Boot 4.1.1 (Jackson 3.1.5)
     acepta `"maxSeverity": 0` como `LOW`, convierte `"confidence": "0.97"` y `"summary": 5`, y con una clave
@@ -1090,4 +1098,4 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Pendiente:
   - Rama `feat/FR-08-triage-client`: guardar la respuesta cruda truncada a 4 KB en `ai_call_log.error_detail`
     (AC-12.3), porque `TriageJson` ya no da el motivo del fallo. Usar `Valid` para `recordDecision` y
-    `max_severity`, nunca lo recibido.
+    `max_severity`, nunca lo recibido. Un 200 sin cuerpo termina en `AI_INVALID_RESPONSE`.
