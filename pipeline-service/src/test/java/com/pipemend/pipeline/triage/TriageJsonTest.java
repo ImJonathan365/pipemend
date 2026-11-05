@@ -242,6 +242,41 @@ class TriageJsonTest {
         assertRejected(changed(VALID, change));
     }
 
+    /** A key that is not a text in the spec, and the node that holds it. */
+    static Stream<Arguments> keysThatAreNotTexts() {
+        return Stream.of(
+                        Arguments.of("latencyMs", "meta"),
+                        Arguments.of("llmCalls", "meta"),
+                        Arguments.of("inputTokens", "meta"),
+                        Arguments.of("outputTokens", "meta"),
+                        Arguments.of("cacheHit", "meta"),
+                        Arguments.of("confidence", "analysis"),
+                        Arguments.of("requestId", "response"),
+                        Arguments.of("recordDecision", "response"),
+                        Arguments.of("maxSeverity", "response"),
+                        Arguments.of("analyses", "response"),
+                        Arguments.of("meta", "response"),
+                        Arguments.of("rootCause", "analysis"),
+                        Arguments.of("severity", "analysis"),
+                        Arguments.of("classification", "analysis"),
+                        Arguments.of("correction", "analysis"),
+                        Arguments.of("operation", "correction"),
+                        Arguments.of("parameters", "correction"))
+                .flatMap(key -> Stream.of("", "   ").map(text -> Arguments.of(key.get()[0], key.get()[1], text)));
+    }
+
+    @ParameterizedTest(name = "{0} = \"{2}\"")
+    @MethodSource("keysThatAreNotTexts")
+    void anEmptyOrBlankTextNeverStandsForANumberABooleanOrNull(String key, String holder, String text) {
+        assertRejected(
+                changed(VALID, response -> holderOrResponse(response, holder).put(key, text)));
+    }
+
+    @Test
+    void aNullBodyIsAnInvalidResponse() {
+        assertRejected(null);
+    }
+
     @Test
     void aWholeNumberIsAValidConfidenceAsInJson() {
         String body = changed(VALID, response -> firstAnalysis(response).put("confidence", 1));
