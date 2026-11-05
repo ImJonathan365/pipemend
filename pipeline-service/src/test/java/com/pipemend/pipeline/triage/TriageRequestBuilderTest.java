@@ -18,7 +18,7 @@ class TriageRequestBuilderTest {
 
     private static final UUID REQUEST = UUID.fromString("0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10");
     private static final UUID BATCH = UUID.fromString("8a2e6d1c-43b2-4f55-8f6b-1f2b3c4d5e6f");
-    private static final String EMOJI = "😀";
+    private static final String EMOJI = "\uD83D\uDE00";
 
     private final TriageRequestBuilder builder =
             new TriageRequestBuilder(BATCH, SchemaTestSupport.realSchema(), "dirty-1k.csv", "CSV");

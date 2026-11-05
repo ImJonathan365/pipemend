@@ -10,8 +10,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Checks JSON against a schema of contracts/ai-service.openapi.json, with only the keywords that spec uses. Pydantic
- * generated it from the models that answer 422, so what passes here is what ai-service accepts. No new dependency.
+ * Checks JSON against a schema of contracts/ai-service.openapi.json, with only the keywords that spec uses. It covers
+ * the shape, not the rules the spec cannot express: a unique violationId is covered by TriageRequestBuilderTest. No
+ * new dependency.
  */
 final class OpenApiShape {
 

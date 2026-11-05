@@ -258,7 +258,7 @@ class TriageRequestContractTest {
     @Test
     void ac_07_2_aMessageAtTheLimitIsAcceptedByTheSpec() {
         Map<String, String> row = RecordTestSupport.validRow();
-        row.put("Quantity", "😀".repeat(2000));
+        row.put("Quantity", "\uD83D\uDE00".repeat(2000));
 
         JsonNode request = tree(captured(new RawRecord.Parsed(1, row)));
 
