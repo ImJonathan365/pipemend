@@ -1,6 +1,7 @@
 package com.pipemend.pipeline.triage.contract;
 
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
@@ -36,6 +37,7 @@ public final class TriageJson {
                 config.setCoercion(CoercionInputShape.String, CoercionAction.Fail);
                 config.setCoercion(CoercionInputShape.Float, CoercionAction.Fail);
                 config.setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail);
+                config.setCoercion(CoercionInputShape.EmptyString, CoercionAction.Fail);
             })
             .withCoercionConfig(LogicalType.Boolean, config -> {
                 config.setCoercion(CoercionInputShape.String, CoercionAction.Fail);
@@ -45,7 +47,10 @@ public final class TriageJson {
 
     private TriageJson() {}
 
-    public static TriageResponse parse(String body) {
+    public static TriageResponse parse(@Nullable String body) {
+        if (body == null) {
+            throw new InvalidTriageJsonException();
+        }
         TriageResponse response;
         try {
             response = MAPPER.readValue(body, TriageResponse.class);
