@@ -143,6 +143,40 @@ class ProcessedRecordWriterTest {
     }
 
     @Test
+    void ac_07_4_aStrayQuoteKeepsItsNullsInTheStoredViolation() throws Exception {
+        write(process(schema, new RawRecord.Malformed(3, "1,5\" TILE", "A stray quote", 8, null)));
+
+        // In jsonb, so that a JSON null is told apart from a key that was never written.
+        assertThat(jdbc.sql("SELECT jsonb_object_keys(violations->0) FROM quarantine_record WHERE batch_id = :id")
+                        .param("id", batchId)
+                        .query(String.class)
+                        .list())
+                .containsExactlyInAnyOrder(
+                        "violationId",
+                        "field",
+                        "sourceHeader",
+                        "errorCode",
+                        "receivedValue",
+                        "expected",
+                        "technicalMessage",
+                        "exceptionType");
+        Map<String, Object> types = jdbc.sql("""
+                        SELECT jsonb_typeof(violations->0->'sourceHeader') AS source_header,
+                            jsonb_typeof(violations->0->'receivedValue') AS received_value,
+                            jsonb_typeof(violations->0->'exceptionType') AS exception_type,
+                            jsonb_typeof(violations->0->'expected'->'expectedColumns') AS expected_columns,
+                            jsonb_typeof(violations->0->'expected'->'receivedColumns') AS received_columns
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(types)
+                .containsEntry("source_header", "null")
+                .containsEntry("received_value", "null")
+                .containsEntry("exception_type", "null")
+                .containsEntry("expected_columns", "number")
+                .containsEntry("received_columns", "null");
+    }
+
+    @Test
     void ac_07_4_aLongRawLineStaysWholeInQuarantine() throws Exception {
         String line = "x".repeat(5000);
 

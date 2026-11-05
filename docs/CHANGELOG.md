@@ -1004,7 +1004,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     responde 503. La spec ya declara 429 y 504, que hasta entonces no se emiten.
 
 ## Sprint 3 — Contexto de FR-07 y petición de triage en el pipeline (2026-11-04)
-- Hecho: FR-07 (AC-07.2, AC-07.3, AC-07.4; AC-07.1 parcial, ver D121) y el DTO de la petición de `06` A.1.
+- Hecho: FR-07 (AC-07.2, AC-07.3; AC-07.1 y AC-07.4 parciales, ver D121) y el DTO de la petición de `06` A.1.
   Sigue sin haber cliente HTTP: `DisabledAiTriagePort` recibe la petición y responde "no disponible".
   - `triage/contract/TriageRequest.java` y `triage/TriageRequestBuilder.java`.
   - `RawRecord.Malformed` lleva `expectedColumns` y `receivedColumns`, y el pipeline los emite en
@@ -1017,6 +1017,9 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   RawRecordReaderTest, RecordProcessorTest y ProcessedRecordWriterTest por las columnas de D96."
 - Decisión del owner (2026-11-04): "Apruebo modificar docs/03 NFR-07 para añadir 404 y 405 a lo que no
   cuenta para el circuit breaker, en la primera rama del pipeline."
+- Decisión del owner (2026-11-04): "Apruebo corregir en docs/CHANGELOG.md la entrada de FR-07 para dejar
+  AC-07.4 como parcial, y añadir a la condición previa del Sprint 5 el envío sin _rawLine con
+  AI_SEND_FULL_RECORD=false y la limitación en el README."
 - Decisiones:
   - D119: `AiTriagePort` recibe `TriageRequest`, como `04` §4 (`triage(context)`). El builder ya corre
     con cada registro inválido, y un fallo suyo termina en `PROCESSING_ERROR`. | Reversible: sí.
@@ -1024,9 +1027,9 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     difieren en `receivedColumns`. Es la excepción a "DTO como `record`" de `04` §6.1. Un test compara
     cada tipo de regla del YAML real con el esquema `Expected` de `contracts/ai-service.openapi.json`, sin
     dependencias nuevas. | Reversible: sí.
-  - D121: `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD` se aplazan al Sprint 5 (`07`), y AC-07.1 queda
-    parcial. `customer_id` llega sin redactar a `ai-service`, que es local y cuyo mock no lee
-    `record.raw`. | Reversible: sí.
+  - D121: `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD` se aplazan al Sprint 5 (`07`), y AC-07.1 y AC-07.4
+    quedan parciales: AC-07.4 también depende de `AI_SEND_FULL_RECORD`. `customer_id` llega sin redactar
+    a `ai-service`, que es local y cuyo mock no lee `record.raw`. | Reversible: sí.
   - D122: el límite de 1 000 de `technicalMessage` y el de 2 000 de `_rawLine` cuentan code points, como
     `ai-service`, y nunca parten un emoji. `_rawLine` solo se recorta en la petición; `raw_payload`
     queda íntegro. | Reversible: sí.
@@ -1046,4 +1049,5 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Rama `feat/FR-08-triage-client`: `AI_REVIEW_REQUIRED` para un `AUTO_FIXABLE`, provisional hasta el
     Sprint 4, y `ai_analysis` con el cuerpo recibido. Su plan revisa el riesgo de 30 s por fila y WireMock.
   - **Condición previa del Sprint 5, junto a `09` §7.11:** ningún proveedor real antes de aplicar
-    `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD`.
+    `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD`, incluido el envío sin `_rawLine` con
+    `AI_SEND_FULL_RECORD=false`, y de documentar esa limitación en el README (AC-07.4).
