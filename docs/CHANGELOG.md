@@ -1099,3 +1099,62 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Rama `feat/FR-08-triage-client`: guardar la respuesta cruda truncada a 4 KB en `ai_call_log.error_detail`
     (AC-12.3), porque `TriageJson` ya no da el motivo del fallo. Usar `Valid` para `recordDecision` y
     `max_severity`, nunca lo recibido. Un 200 sin cuerpo termina en `AI_INVALID_RESPONSE`.
+
+## Sprint 3 — Cliente HTTP de triage y `ai_call_log` (2026-11-08)
+- Hecho: FR-08 en el lado del pipeline, sin cablear. `HttpAiTriageClient` llama a `POST /v1/triage` y convierte cada
+  respuesta en un `Reply` siguiendo `06` A.5. Cubre AC-08.5 (una fila de `ai_call_log` por llamada, también si falla,
+  en su propia transacción) y AC-12.3 (cuerpo crudo en `error_detail`). AC-08.6 queda parcial: `outcome` distingue
+  `SUCCESS` de `CACHE_HIT`, pero `ai_calls_count` llega con el cableado. El job sigue usando `DisabledAiTriagePort`
+  hasta `feat/FR-08-quarantine-classifier`.
+- Dependencia de test: `org.wiremock:wiremock-standalone:3.13.2`, la última 3.x en Maven Central; la serie 4 sigue en
+  beta. El cliente usa `RestClient` con `JdkClientHttpRequestFactory`, sin dependencias nuevas de producción. Todos
+  los tests usan 127.0.0.1: WireMock, un puerto cerrado y un listener con la cola de aceptación llena para el
+  timeout de conexión.
+- Decisión del owner (2026-11-08): "Apruebo partir el cliente en feat/FR-08-triage-client (HttpAiTriageClient,
+  AiClientProperties, AiCallLogRepository con REQUIRES_NEW y TriageOutcome, sin cablear) y
+  feat/FR-08-quarantine-classifier; añadir org.wiremock:wiremock-standalone:3.13.2 como dependencia de test en
+  pipeline-service/build.gradle.kts; mapear docs/06 A.5 y las respuestas fuera de la tabla a quarantine_reason y
+  outcome como propone el plan; guardar en error_detail el cuerpo crudo truncado a 4096 bytes UTF-8 y, en
+  transporte, solo el tipo de excepción; que un fallo al escribir ai_call_log no se capture en el cliente y termine
+  en PROCESSING_ERROR según NFR-03; aplazar al Sprint 4 marcar el lote agotado ante 429 LLM_BUDGET_EXHAUSTED y
+  aceptar hasta entonces el riesgo de 30 s por fila; y añadir la entrada al CHANGELOG."
+- Decisión del owner (2026-11-08), sobre la frase anterior: `TriageOutcome` no cambia en esta rama. Es una interfaz
+  sellada que `RecordProcessor` recorre con un `switch` exhaustivo, y añadirle variantes obligaba a tocar el
+  procesador. El cliente devuelve su propio `HttpAiTriageClient.Reply`.
+- Decisiones:
+  - D129: `Reply` tiene cuatro variantes. `Analysed` lleva la respuesta, el cuerpo tal cual y el `Valid` del
+    validador. `Unavailable`, `InvalidResponse` y `BudgetExhausted` llevan un texto técnico sin el cuerpo.
+    | Alternativas: ampliar `TriageOutcome` y tocar `RecordProcessor` aquí | Reversible: sí | Aprobado por: owner.
+  - D130: fuera de la tabla de A.5 decide el estado HTTP, y el `code` solo distingue las filas de 429 y 502:
+    - cualquier estado distinto de 200 que no sea 5xx ni 429 (otros 2xx, 3xx, 4xx sin fila): `AI_INVALID_RESPONSE`
+      y `HTTP_ERROR`;
+    - un 5xx con problem+json y `code` desconocido: `AI_UNAVAILABLE` y `HTTP_ERROR`;
+    - un 5xx sin problem+json: `AI_UNAVAILABLE` y `UNAVAILABLE`.
+
+    Un problem+json necesita `Content-Type: application/problem+json` y un `code` de texto. Los timeouts de conexión
+    y de lectura se registran como `TIMEOUT`. | Reversible: sí | Aprobado por: owner.
+  - D131: `error_detail` guarda el cuerpo crudo truncado a 4 096 bytes UTF-8 sin partir un code point (`05` §3.5).
+    En un fallo de transporte guarda solo el nombre completo de la clase de la excepción; con el cuerpo vacío, `null`.
+    `U+0000` se guarda como `U+FFFD` antes de truncar, porque PostgreSQL lo rechaza en `text`. | Reversible: sí.
+  - D132: ni el cliente ni `AiCallLogRepository` capturan un fallo al escribir el log (NFR-03, `03` l.84); en la
+    rama B, `RecordProcessor` lo convierte en `PROCESSING_ERROR`. | Reversible: sí | Aprobado por: owner.
+  - D133: cada llamada envía `X-Request-Id` igual a `requestId` y también `X-Batch-Id` (`06` A, cabeceras
+    obligatorias). | Reversible: sí.
+  - D134: una respuesta que no pasa `TriageJson` o el validador no guarda nada de `meta`. Un `llmCalls` mayor que
+    32 767 se trata como respuesta inválida, porque no cabe en `ai_call_log.llm_calls` (`smallint`). | Reversible: sí.
+  - D135: el cuerpo de una respuesta no va a los logs a ningún nivel. Un rechazo por estado (400, 404, 405, 422 y
+    los demás no 5xx) se registra en `ERROR` con el `requestId`, el estado y el `code` solo si es uno de A.5. Una
+    respuesta que no pasa el validador va a `WARN` con las incidencias, sin valores. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`. Nueva dependencia de
+  test en `pipeline-service/build.gradle.kts`.
+- Pendiente:
+  - Rama `feat/FR-08-quarantine-classifier`: cablear el cliente y retirar `DisabledAiTriagePort`; columnas de IA de
+    `quarantine_record` y `ai_calls_count`; `AI_REVIEW_REQUIRED` provisional para un `AUTO_FIXABLE`; URL de loopback
+    cerrada en los tests de Spring; comprobación manual con `docker compose`. `ai_analysis` es `jsonb`, que también
+    rechaza `\u0000`: esa rama debe decidir qué hacer con él.
+  - Sprint 4 (`07` l.109): reintentos de transporte (`attempts` > 1), circuit breaker (`CIRCUIT_OPEN`), `AiBudget`
+    y marcar el lote agotado ante `429 LLM_BUDGET_EXHAUSTED` (`06` l.334), y la validación al arrancar del invariante
+    de timeouts de NFR-07 (`03` l.98), que esta rama no implementa.
+  - Riesgo aceptado hasta el Sprint 4: con `ai-service` colgado, cada inválida espera el timeout de lectura completo.
+    En `dirty-1k` son 50 × 30 s ≈ 25 min con la transacción del chunk abierta, frente a ≲ 7 min con el circuit
+    breaker (`03` l.104).
