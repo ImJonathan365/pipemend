@@ -36,6 +36,8 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
 	testImplementation("org.awaitility:awaitility")
+	// Not managed by the Boot BOM; the standalone jar shades its own Jetty and Jackson 2 (NFR-16).
+	testImplementation("org.wiremock:wiremock-standalone:3.13.2")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
