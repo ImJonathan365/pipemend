@@ -1158,3 +1158,75 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Riesgo aceptado hasta el Sprint 4: con `ai-service` colgado, cada inválida espera el timeout de lectura completo.
     En `dirty-1k` son 50 × 30 s ≈ 25 min con la transacción del chunk abierta, frente a ≲ 7 min con el circuit
     breaker (`03` l.104).
+
+## Sprint 3 — Cableado del cliente y cuarentena con análisis (2026-11-08)
+- Hecho: FR-08 cableado y FR-11 con análisis de IA. `HttpAiTriageClient` es el bean de `AiTriagePort`, y
+  `DisabledAiTriagePort` se retira, sin flag ni perfil. `RecordProcessor` asigna `quarantine_reason` según `02` §5.
+  `quarantine_record` guarda `ai_analysis`, `max_severity` y `ai_request_id`, y `ingestion_batch.ai_calls_count`
+  se guarda al completar (AC-08.6 completo).
+- Comprobación manual con `docker compose` (proyecto `pmprobe`, `--env-file` vacío, `LLM_PROVIDER=mock` por
+  defecto), contra el `ai-service` real:
+  - `dirty-1k`: `COMPLETED`, 950 `DIRECT`, 0 `AUTO_CORRECTED` y 50 en cuarentena, todas `AI_REVIEW_REQUIRED` con
+    análisis y `ai_request_id`, y ninguna con `policy_decision`.
+  - `ai_call_log`: 44 `SUCCESS` y 6 `CACHE_HIT`, todas con `attempts = 1`, así que `aiCalls = 44`, como define
+    AC-08.6. Las 50 filas de cuarentena tienen su llamada.
+  - Tiempos: 1,6 s de la subida a `COMPLETED`; 98,9 s de `up --build --wait` con el código nuevo; 1,5 s de `down -v`.
+- Decisión del owner (2026-11-08): "Apruebo en feat/FR-08-quarantine-classifier: cablear HttpAiTriageClient como
+  bean de AiTriagePort y borrar DisabledAiTriagePort sin flags; mover las variantes de Reply a TriageOutcome; que
+  RecordProcessor asigne quarantine_reason según 02 §5, con AUTO_FIXABLE en AI_REVIEW_REQUIRED de forma provisional
+  hasta el Sprint 4, y que cualquier excepción, también al escribir ai_call_log, termine en PROCESSING_ERROR;
+  escribir ai_analysis con el cuerpo recibido, max_severity de Result.Valid, ai_request_id en toda llamada intentada
+  (sustituye a D66) y ai_calls_count desde ai_call_log al completar; para U+0000 en ai_analysis y summary, la opción
+  A; apuntar los tests de Spring a http://127.0.0.1:1; añadir IngestionJobTriageTest con un transformador de
+  WireMock en loopback; hacer la comprobación manual con docker compose y el mock; cambiar los tests existentes
+  listados en el plan, incluida la expectativa de ai_request_id de ProcessedRecordWriterTest; y añadir la entrada al
+  CHANGELOG y la nota en docs/06 A.5."
+- **Provisional hasta el Sprint 4:** un registro con todas sus violaciones `AUTO_FIXABLE` va a cuarentena con
+  `AI_REVIEW_REQUIRED`, aunque `02` l.161 define ese motivo para "al menos una `NEEDS_HUMAN_REVIEW`". Sin
+  `CorrectionPolicy` no se corrige nada, y `POLICY_REJECTED` afirmaría que actuó una política que no existe. Las
+  métricas por motivo cuentan así esos registros hasta el Sprint 4.
+- Decisiones:
+  - D136: las variantes de `Reply` pasan a `TriageOutcome` y `HttpAiTriageClient` implementa `AiTriagePort`. El
+    bean `aiTriagePort` vive en `IngestionJobConfiguration`. | Alternativas: conservar `Reply` y quitar el puerto |
+    Reversible: sí | Aprobado por: owner.
+  - D137: `summary` es el de la IA con `Analysed`, ya acotado a 1 000 code points por el validador, y el texto técnico
+    del pipeline en los motivos `AI_*` y en `PROCESSING_ERROR` (AC-11.2). | Reversible: sí | Aprobado por: owner.
+  - D138: `ai_request_id` va en toda llamada intentada, también en un `PROCESSING_ERROR` ocurrido durante o después
+    de la llamada; si la excepción ocurre antes de llamar, queda `null`. Sustituye a D66. | Reversible: sí |
+    Aprobado por: owner.
+  - D139: `ai_analysis` es el cuerpo tal como llegó, solo con un análisis válido; `max_severity` es la de
+    `Result.Valid`; `policy_decision` queda en `null` hasta el Sprint 4. | Reversible: sí | Aprobado por: owner.
+  - D140: `ai_calls_count` se calcula en `complete()` con la misma cuenta que la API usa durante el lote: filas de
+    `ai_call_log` sin `CACHE_HIT`, fallidas incluidas. | Reversible: sí.
+  - D141: U+0000, opción A. El cliente revisa el árbol JSON del cuerpo entero (claves y cadenas, también las claves
+    que `TriageJson` ignora) después de `TriageJson` y antes del validador. Si aparece, la respuesta es
+    `InvalidResponse`, `ai_call_log` registra `INVALID_RESPONSE` y la fila va a cuarentena con `AI_INVALID_RESPONSE`
+    y `ai_analysis` en `null`. U+0001 se acepta. | Reversible: sí | Aprobado por: owner.
+    - **Medido:** el cuerpo trae U+0000 como el escape JSON `\u0000`, seis caracteres que `text` admite, así que
+      `error_detail` guarda el cuerpo sin cambios. La sustitución por U+FFFD de D131 solo actúa con un byte NUL
+      literal.
+    - **Supuesto, sin test:** ese byte NUL ya lo rechaza `TriageJson`, porque Jackson no admite caracteres de control
+      sin escapar.
+  - D142: los tests de Spring apuntan a `http://127.0.0.1:1` desde `PostgresTestConfiguration`.
+    `IngestionJobTriageTest` registra un `HttpAiTriageClient` real con `@Primary` que apunta a WireMock, porque el
+    `DynamicPropertyRegistrar` común gana a `@DynamicPropertySource` (medido: con la propiedad, el job seguía
+    llamando al puerto cerrado). | Alternativas: un perfil de test, o mover la URL fuera de
+    `PostgresTestConfiguration` | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` (nota de U+0000
+  en A.5) y `docs/CHANGELOG.md`. `contracts/` no cambia.
+- Tests existentes cambiados:
+  - `RecordProcessorTest` y `ProcessedRecordWriterTest`: `DisabledAiTriagePort` pasa a una lambda que devuelve
+    `Unavailable`.
+  - `ProcessedRecordWriterTest`: deja de comprobar `ai_request_id` en `null` y comprueba el id de la petición
+    (sustituye a D66).
+  - `HttpAiTriageClientTest`: `Reply` pasa a `TriageOutcome`. El test que leía la URL por defecto del contexto ahora
+    la lee de `application.yml`, porque el contexto de test apunta a loopback; otro test comprueba esa URL.
+  - `IngestionJobTest` (`dirty-1k`): sus aserciones no cambian; se añaden 50 filas `UNAVAILABLE` y
+    `ai_calls_count = 50`.
+- Pendiente:
+  - Rama `fix/` desde `dev`, después de esta y antes de `v0.3`, con su propio plan: el número fuera del rango de
+    `numeric` en `jsonb` (medido: `1e1000000` da `value overflows numeric format`) y el byte NUL de un CSV en
+    `raw_payload` y `violations` (sin verificar).
+  - Sprint 4: `CorrectionPolicy` y el motivo definitivo de un `AUTO_FIXABLE`, reintentos, circuit breaker,
+    `AiBudget`, el lote agotado ante `429 LLM_BUDGET_EXHAUSTED`, el invariante de timeouts de NFR-07, AC-12.2 y
+    AC-12.5.

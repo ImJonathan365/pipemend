@@ -96,6 +96,13 @@ class IngestionJobTest {
                 .containsEntry("quarantined_count", 50);
         assertThat(count("quarantine_record", batchId, "quarantine_reason = 'AI_UNAVAILABLE'"))
                 .isEqualTo(50);
+        // AC-08.5 and AC-08.6: every refused call leaves its row and counts, also the failed ones.
+        assertThat(count("ai_call_log", batchId, "outcome = 'UNAVAILABLE'")).isEqualTo(50);
+        assertThat(jdbc.sql("SELECT ai_calls_count FROM ingestion_batch WHERE id = :id")
+                        .param("id", batchId)
+                        .query(Integer.class)
+                        .single())
+                .isEqualTo(50);
         assertThat(jdbc.sql("""
                                 SELECT source_row_number FROM quarantine_record
                                 WHERE batch_id = :id AND raw_payload ->> '_rawLine' IS NOT NULL ORDER BY 1

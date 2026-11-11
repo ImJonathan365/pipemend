@@ -8,6 +8,7 @@ import com.pipemend.pipeline.triage.contract.TriageResponse;
 import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.jspecify.annotations.Nullable;
@@ -24,18 +25,18 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * POST /v1/triage (FR-08) and the docs/06 A.5 table that turns each answer into a {@link Reply}. Every call, also a
+ * POST /v1/triage (FR-08) and the docs/06 A.5 table that turns each answer into a {@link TriageOutcome}. Every call, also a
  * failed one, leaves one row in ai_call_log (AC-08.5). Retries and the circuit breaker come in Sprint 4 (docs/07), so
  * attempts is always 1. The body of a response never goes to the logs: it carries values of the row.
  */
-public final class HttpAiTriageClient {
+public final class HttpAiTriageClient implements AiTriagePort {
 
     static final String TRIAGE_PATH = "/v1/triage";
     static final String REQUEST_ID_HEADER = "X-Request-Id";
     static final String BATCH_ID_HEADER = "X-Batch-Id";
 
     private static final Logger log = LoggerFactory.getLogger(HttpAiTriageClient.class);
-    private static final JsonMapper PROBLEM_READER = JsonMapper.builder().build();
+    private static final JsonMapper TREE_READER = JsonMapper.builder().build();
     // Only these go into a detail or a log line; any other code goes to error_code alone.
     private static final Set<String> KNOWN_CODES = Set.of(
             "INVALID_REQUEST",
@@ -49,23 +50,6 @@ public final class HttpAiTriageClient {
             "LLM_PROVIDER_ERROR",
             "PROVIDER_NOT_CONFIGURED",
             "LLM_TIMEOUT");
-
-    /** What the pipeline does with the record follows from the variant (docs/06 A.5). */
-    public sealed interface Reply {
-
-        /** @param body as received, for ai_analysis */
-        record Analysed(TriageResponse response, String body, TriageResponseValidator.Result.Valid verdict)
-                implements Reply {}
-
-        /** AI_UNAVAILABLE */
-        record Unavailable(String detail) implements Reply {}
-
-        /** AI_INVALID_RESPONSE */
-        record InvalidResponse(String detail) implements Reply {}
-
-        /** AI_BUDGET_EXCEEDED */
-        record BudgetExhausted(String detail) implements Reply {}
-    }
 
     private enum Kind {
         UNAVAILABLE,
@@ -96,7 +80,8 @@ public final class HttpAiTriageClient {
         this.callLog = callLog;
     }
 
-    public Reply call(TriageRequest request) {
+    @Override
+    public TriageOutcome triage(TriageRequest request) {
         long start = System.nanoTime();
         Received received;
         try {
@@ -120,12 +105,16 @@ public final class HttpAiTriageClient {
         return httpFailure(request, received, latencyMs);
     }
 
-    private Reply answer(TriageRequest request, Received received, int latencyMs) {
+    private TriageOutcome answer(TriageRequest request, Received received, int latencyMs) {
         TriageResponse response;
         try {
             response = TriageJson.parse(received.body());
         } catch (TriageJson.InvalidTriageJsonException e) {
             return invalidAnswer(request, received, latencyMs, "is not valid against the contract");
+        }
+        // PostgreSQL takes U+0000 neither in text nor in jsonb, and ai_analysis keeps the whole body (docs/06 A.5).
+        if (hasNul(TREE_READER.readTree(received.body()))) {
+            return invalidAnswer(request, received, latencyMs, "has U+0000 in a key or a string");
         }
         // ai_call_log.llm_calls is a smallint; ai-service never makes more than 3 (NFR-07).
         if (response.meta().llmCalls() > Short.MAX_VALUE) {
@@ -135,7 +124,7 @@ public final class HttpAiTriageClient {
             case TriageResponseValidator.Result.Valid valid -> {
                 Outcome outcome = response.meta().cacheHit() ? Outcome.CACHE_HIT : Outcome.SUCCESS;
                 save(request, outcome, received.status(), null, latencyMs, null, response.meta());
-                yield new Reply.Analysed(response, received.body(), valid);
+                yield new TriageOutcome.Analysed(response, received.body(), valid);
             }
             case TriageResponseValidator.Result.Invalid invalid -> {
                 log.warn("ai-service answer {} failed the semantic check: {}", request.requestId(), invalid.issues());
@@ -144,12 +133,12 @@ public final class HttpAiTriageClient {
         };
     }
 
-    private Reply invalidAnswer(TriageRequest request, Received received, int latencyMs, String why) {
+    private TriageOutcome invalidAnswer(TriageRequest request, Received received, int latencyMs, String why) {
         save(request, Outcome.INVALID_RESPONSE, received.status(), null, latencyMs, nonEmpty(received.body()), null);
-        return new Reply.InvalidResponse("The answer of ai-service " + why);
+        return new TriageOutcome.InvalidResponse("The answer of ai-service " + why);
     }
 
-    private Reply httpFailure(TriageRequest request, Received received, int latencyMs) {
+    private TriageOutcome httpFailure(TriageRequest request, Received received, int latencyMs) {
         int status = received.status();
         String code = problemCode(received);
         Kind kind;
@@ -171,24 +160,24 @@ public final class HttpAiTriageClient {
         String detail =
                 "ai-service answered HTTP " + status + (code != null && KNOWN_CODES.contains(code) ? " " + code : "");
         return switch (kind) {
-            case UNAVAILABLE -> new Reply.Unavailable(detail);
-            case BUDGET -> new Reply.BudgetExhausted(detail);
+            case UNAVAILABLE -> new TriageOutcome.Unavailable(detail);
+            case BUDGET -> new TriageOutcome.BudgetExhausted(detail);
             case INVALID -> {
                 if (status < 500) {
                     log.error("ai-service rejected request {}: {}", request.requestId(), detail);
                 }
-                yield new Reply.InvalidResponse(detail);
+                yield new TriageOutcome.InvalidResponse(detail);
             }
         };
     }
 
-    private Reply transportFailure(TriageRequest request, ResourceAccessException e, int latencyMs) {
+    private TriageOutcome transportFailure(TriageRequest request, ResourceAccessException e, int latencyMs) {
         Throwable cause = e.getCause() == null ? e : e.getCause();
         // HttpConnectTimeoutException is a subclass, so this covers the connect and the read timeout.
         boolean timeout = cause instanceof HttpTimeoutException;
         String type = cause.getClass().getName();
         save(request, timeout ? Outcome.TIMEOUT : Outcome.UNAVAILABLE, null, null, latencyMs, type, null);
-        return new Reply.Unavailable(
+        return new TriageOutcome.Unavailable(
                 (timeout ? "ai-service did not answer in time: " : "ai-service is unreachable: ") + type);
     }
 
@@ -226,11 +215,31 @@ public final class HttpAiTriageClient {
             return null;
         }
         try {
-            JsonNode code = PROBLEM_READER.readTree(received.body()).get("code");
+            JsonNode code = TREE_READER.readTree(received.body()).get("code");
             return code != null && code.isString() ? code.asString() : null;
         } catch (JacksonException e) {
             return null;
         }
+    }
+
+    /** Also in the keys TriageJson ignores. */
+    private static boolean hasNul(JsonNode node) {
+        if (node.isString()) {
+            return node.asString().indexOf(0) >= 0;
+        }
+        for (Map.Entry<String, JsonNode> property : node.properties()) {
+            if (property.getKey().indexOf(0) >= 0 || hasNul(property.getValue())) {
+                return true;
+            }
+        }
+        if (node.isArray()) {
+            for (JsonNode element : node) {
+                if (hasNul(element)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static @Nullable MediaType contentType(HttpHeaders headers) {

@@ -17,7 +17,6 @@ import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder;
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.pipemend.pipeline.PostgresTestConfiguration;
 import com.pipemend.pipeline.persistence.AiCallLogRepository;
-import com.pipemend.pipeline.triage.HttpAiTriageClient.Reply;
 import com.pipemend.pipeline.triage.contract.Classification;
 import com.pipemend.pipeline.triage.contract.Severity;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
@@ -27,6 +26,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +48,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -116,17 +117,25 @@ class HttpAiTriageClientTest {
     }
 
     @Test
-    void theDefaultsFollowDocs04AndNfr07() {
+    void theSpringTestsReachAClosedLoopbackPortWithTheDefaultTimeouts() {
         assertThat(defaults)
                 .isEqualTo(new AiClientProperties(
-                        URI.create("http://ai-service:8000"), Duration.ofMillis(2000), Duration.ofMillis(30000)));
+                        URI.create(PostgresTestConfiguration.AI_DOWN),
+                        Duration.ofMillis(2000),
+                        Duration.ofMillis(30000)));
+    }
+
+    @Test
+    void theDefaultBaseUrlIsTheComposeServiceOfDocs04() throws IOException {
+        assertThat(new ClassPathResource("application.yml").getContentAsString(StandardCharsets.UTF_8))
+                .contains("base-url: ${AI_SERVICE_BASE_URL:http://ai-service:8000}");
     }
 
     @Test
     void sendsTheRequestWithTheIdsInTheHeaders() {
         answer(aResponse().withStatus(200).withBody(validAnswer().toString()));
 
-        client.call(request);
+        client.triage(request);
 
         server.verify(postRequestedFor(urlEqualTo("/v1/triage"))
                 .withHeader("X-Request-Id", equalTo(request.requestId().toString()))
@@ -143,9 +152,9 @@ class HttpAiTriageClientTest {
                 .withHeader("Content-Type", "application/json")
                 .withBody(body));
 
-        Reply reply = client.call(request);
+        TriageOutcome reply = client.triage(request);
 
-        assertThat(reply).isInstanceOfSatisfying(Reply.Analysed.class, analysed -> {
+        assertThat(reply).isInstanceOfSatisfying(TriageOutcome.Analysed.class, analysed -> {
             assertThat(analysed.body()).isEqualTo(body);
             assertThat(analysed.verdict().recordDecision()).isEqualTo(Classification.AUTO_FIXABLE);
             assertThat(analysed.verdict().maxSeverity()).isEqualTo(Severity.LOW);
@@ -172,7 +181,7 @@ class HttpAiTriageClientTest {
         ((ObjectNode) body.get("meta")).put("cacheHit", true);
         answer(aResponse().withStatus(200).withBody(body.toString()));
 
-        assertThat(client.call(request)).isInstanceOf(Reply.Analysed.class);
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.Analysed.class);
         assertThat(onlyRow()).containsEntry("outcome", "CACHE_HIT");
     }
 
@@ -201,7 +210,7 @@ class HttpAiTriageClientTest {
                 .withHeader("Content-Type", "application/json")
                 .withBody(body));
 
-        assertThat(client.call(request)).isInstanceOf(Reply.InvalidResponse.class);
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.InvalidResponse.class);
         assertThat(onlyRow())
                 .containsEntry("outcome", "INVALID_RESPONSE")
                 .containsEntry("http_status", 200)
@@ -211,13 +220,62 @@ class HttpAiTriageClientTest {
         assertThat(output).doesNotContain(ROW_VALUE);
     }
 
+    static Stream<Arguments> docs06A5_uPlus0000() {
+        ObjectNode inSummary = validAnswer();
+        inSummary.put("summary", "a" + (char) 0 + "b");
+        ObjectNode inAParameter = validAnswer();
+        ((ObjectNode) inAParameter.get("analyses").get(0).get("correction").get("parameters"))
+                .put("sourcePattern", "dd/MM" + (char) 0);
+        ObjectNode inAnUnknownKey = validAnswer();
+        inAnUnknownKey.put("extra" + (char) 0, 1);
+        return Stream.of(
+                arguments("in summary", inSummary.toString()),
+                arguments("in a value of correction.parameters", inAParameter.toString()),
+                arguments("in a key TriageJson ignores", inAnUnknownKey.toString()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void docs06A5_uPlus0000(String where, String body) {
+        answer(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(body));
+
+        assertThat(client.triage(request))
+                .isEqualTo(
+                        new TriageOutcome.InvalidResponse("The answer of ai-service has U+0000 in a key or a string"));
+        assertThat(onlyRow())
+                .containsEntry("outcome", "INVALID_RESPONSE")
+                .containsEntry("http_status", 200)
+                .containsEntry("provider", null)
+                // The body carries the six characters of the JSON escape, which text admits; never U+0000 itself.
+                .containsEntry("error_detail", body);
+    }
+
+    @Test
+    void docs06A5_uPlus0001IsAccepted() {
+        ObjectNode body = validAnswer();
+        body.put("summary", "a" + (char) 1 + "b");
+        answer(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(body.toString()));
+
+        assertThat(client.triage(request))
+                .isInstanceOfSatisfying(
+                        TriageOutcome.Analysed.class,
+                        analysed -> assertThat(analysed.response().summary()).isEqualTo("a" + (char) 1 + "b"));
+        assertThat(onlyRow()).containsEntry("outcome", "SUCCESS");
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void ac_12_3_anEmpty200IsAnInvalidResponse(boolean withContentType) {
         ResponseDefinitionBuilder empty = aResponse().withStatus(200);
         answer(withContentType ? empty.withHeader("Content-Type", "application/json") : empty);
 
-        assertThat(client.call(request)).isInstanceOf(Reply.InvalidResponse.class);
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.InvalidResponse.class);
         assertThat(onlyRow())
                 .containsEntry("outcome", "INVALID_RESPONSE")
                 .containsEntry("http_status", 200)
@@ -227,40 +285,49 @@ class HttpAiTriageClientTest {
     static Stream<Arguments> docs06A5() {
         return Stream.of(
                 // The rows of docs/06 A.5.
-                arguments(400, PROBLEM, "INVALID_REQUEST", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(404, PROBLEM, "NOT_FOUND", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(405, PROBLEM, "METHOD_NOT_ALLOWED", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(422, PROBLEM, "VALIDATION_ERROR", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "RATE_LIMITED", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "LLM_BUDGET_EXHAUSTED", Reply.BudgetExhausted.class, "HTTP_ERROR"),
-                arguments(500, PROBLEM, "INTERNAL_ERROR", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(502, PROBLEM, "LLM_INVALID_OUTPUT", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(502, PROBLEM, "LLM_PROVIDER_ERROR", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, "PROVIDER_NOT_CONFIGURED", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(504, PROBLEM, "LLM_TIMEOUT", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(502, "text/html", null, Reply.Unavailable.class, "UNAVAILABLE"),
-                arguments(503, "text/html", null, Reply.Unavailable.class, "UNAVAILABLE"),
-                arguments(504, "text/html", null, Reply.Unavailable.class, "UNAVAILABLE"),
-                arguments(503, "application/json", "PROVIDER_NOT_CONFIGURED", Reply.Unavailable.class, "UNAVAILABLE"),
+                arguments(400, PROBLEM, "INVALID_REQUEST", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(404, PROBLEM, "NOT_FOUND", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(405, PROBLEM, "METHOD_NOT_ALLOWED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(422, PROBLEM, "VALIDATION_ERROR", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(429, PROBLEM, "RATE_LIMITED", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(429, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.BudgetExhausted.class, "HTTP_ERROR"),
+                arguments(500, PROBLEM, "INTERNAL_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(502, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(502, PROBLEM, "LLM_PROVIDER_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(503, PROBLEM, "PROVIDER_NOT_CONFIGURED", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(504, PROBLEM, "LLM_TIMEOUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(502, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
+                arguments(503, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
+                arguments(504, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
+                arguments(
+                        503,
+                        "application/json",
+                        "PROVIDER_NOT_CONFIGURED",
+                        TriageOutcome.Unavailable.class,
+                        "UNAVAILABLE"),
                 // Outside the table: by the status, whatever the code says.
-                arguments(400, PROBLEM, "LLM_BUDGET_EXHAUSTED", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "LLM_INVALID_OUTPUT", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, "LLM_INVALID_OUTPUT", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(429, "text/plain", null, Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(422, "text/plain", null, Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(401, PROBLEM, "UNAUTHORIZED", Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(418, "text/plain", null, Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(302, "text/plain", null, Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(201, "application/json", null, Reply.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(500, "text/plain", null, Reply.Unavailable.class, "UNAVAILABLE"),
-                arguments(501, PROBLEM, "SOMETHING_NEW", Reply.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, null, Reply.Unavailable.class, "UNAVAILABLE"));
+                arguments(400, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(429, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(503, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(429, "text/plain", null, TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(422, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(401, PROBLEM, "UNAUTHORIZED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(418, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(302, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(201, "application/json", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
+                arguments(500, "text/plain", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
+                arguments(501, PROBLEM, "SOMETHING_NEW", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
+                arguments(503, PROBLEM, null, TriageOutcome.Unavailable.class, "UNAVAILABLE"));
     }
 
     @ParameterizedTest(name = "{0} {1} {2}")
     @MethodSource
     void docs06A5(
-            int status, String contentType, @Nullable String code, Class<? extends Reply> expected, String outcome) {
+            int status,
+            String contentType,
+            @Nullable String code,
+            Class<? extends TriageOutcome> expected,
+            String outcome) {
         String body = code == null
                 ? "{\"detail\":\"" + ROW_VALUE + "\"}"
                 : "{\"type\":\"https://pipemend.dev/problems/x\",\"title\":\"t\",\"status\":" + status
@@ -270,7 +337,7 @@ class HttpAiTriageClientTest {
                 .withHeader("Content-Type", contentType)
                 .withBody(body));
 
-        assertThat(client.call(request)).isInstanceOf(expected);
+        assertThat(client.triage(request)).isInstanceOf(expected);
         assertThat(onlyRow())
                 .containsEntry("outcome", outcome)
                 .containsEntry("http_status", status)
@@ -285,7 +352,7 @@ class HttpAiTriageClientTest {
                 .withHeader("Content-Type", PROBLEM)
                 .withBody("{\"code\":\"VALIDATION_ERROR\",\"detail\":\"" + ROW_VALUE + "\"}"));
 
-        client.call(request);
+        client.triage(request);
 
         assertThat(output).contains("ai-service rejected request " + request.requestId());
         assertThat(output).contains("HTTP 422 VALIDATION_ERROR");
@@ -300,7 +367,7 @@ class HttpAiTriageClientTest {
         }
         client = clientFor(URI.create("http://127.0.0.1:" + closed));
 
-        assertThat(client.call(request)).isInstanceOf(Reply.Unavailable.class);
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.Unavailable.class);
         assertThat(onlyRow())
                 .containsEntry("outcome", "UNAVAILABLE")
                 .containsEntry("http_status", null)
@@ -312,7 +379,7 @@ class HttpAiTriageClientTest {
     void docs06A5_aCutConnectionIsUnavailable(String fault) {
         answer(aResponse().withFault(Fault.valueOf(fault)));
 
-        assertThat(client.call(request)).isInstanceOf(Reply.Unavailable.class);
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.Unavailable.class);
         assertThat(onlyRow())
                 .containsEntry("outcome", "UNAVAILABLE")
                 .containsEntry("http_status", null)
@@ -326,9 +393,9 @@ class HttpAiTriageClientTest {
                 .withBody(validAnswer().toString())
                 .withFixedDelay((int) READ_TIMEOUT.toMillis() * 3));
 
-        assertThat(client.call(request))
-                .isEqualTo(
-                        new Reply.Unavailable("ai-service did not answer in time: java.net.http.HttpTimeoutException"));
+        assertThat(client.triage(request))
+                .isEqualTo(new TriageOutcome.Unavailable(
+                        "ai-service did not answer in time: java.net.http.HttpTimeoutException"));
         assertThat(onlyRow())
                 .containsEntry("outcome", "TIMEOUT")
                 .containsEntry("http_status", null)
@@ -341,8 +408,8 @@ class HttpAiTriageClientTest {
         try (ServerSocket full = saturated(held)) {
             client = clientFor(URI.create("http://127.0.0.1:" + full.getLocalPort()));
 
-            assertThat(client.call(request))
-                    .isEqualTo(new Reply.Unavailable(
+            assertThat(client.triage(request))
+                    .isEqualTo(new TriageOutcome.Unavailable(
                             "ai-service did not answer in time: java.net.http.HttpConnectTimeoutException"));
         } finally {
             for (Socket socket : held) {
@@ -365,7 +432,7 @@ class HttpAiTriageClientTest {
 
         new TransactionTemplate(transactions).executeWithoutResult(chunk -> {
             insertBatch(control);
-            client.call(request);
+            client.triage(request);
             chunk.setRollbackOnly();
         });
 
@@ -390,7 +457,7 @@ class HttpAiTriageClientTest {
                 request.violations(),
                 request.options());
 
-        assertThatThrownBy(() -> client.call(orphan)).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> client.triage(orphan)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private HttpAiTriageClient clientFor(URI baseUrl) {
