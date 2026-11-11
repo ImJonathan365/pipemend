@@ -340,6 +340,8 @@ Regla general (NFR-07): el pipeline **no** reintenta errores que traen `code` de
 | — | (transporte) | Conexión rechazada / timeout de conexión / 502/503/504 sin `problem+json` <!-- owner, 2026-11-03 --> | Sí (2, backoff) | Sí | `AI_UNAVAILABLE` |
 | — | (transporte) | *Read timeout* del pipeline | No | Sí | `AI_UNAVAILABLE` |
 
+Una respuesta `200` con U+0000 (`\u0000`) en cualquier clave o cadena, incluidas las claves que el pipeline ignora, no cumple el contrato y termina en `AI_INVALID_RESPONSE`: PostgreSQL no admite ese carácter ni en `text` ni en `jsonb`, y `ai_analysis` guarda el cuerpo tal cual. <!-- owner, 2026-11-08 -->
+
 Ejemplo:
 
 ```json
