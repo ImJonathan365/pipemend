@@ -1,12 +1,15 @@
 package com.pipemend.pipeline.batch;
 
+import com.pipemend.pipeline.persistence.AiCallLogRepository;
 import com.pipemend.pipeline.persistence.IngestionBatchRepository;
 import com.pipemend.pipeline.persistence.ProcessedRecordWriter;
 import com.pipemend.pipeline.persistence.QuarantineWriter;
 import com.pipemend.pipeline.persistence.SalesTransactionWriter;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
-import com.pipemend.pipeline.triage.DisabledAiTriagePort;
+import com.pipemend.pipeline.triage.AiClientProperties;
+import com.pipemend.pipeline.triage.AiTriagePort;
+import com.pipemend.pipeline.triage.HttpAiTriageClient;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
 import java.util.UUID;
@@ -176,6 +179,7 @@ public class IngestionJobConfiguration {
             SchemaDefinition schema,
             Validator validator,
             IngestionBatchRepository batches,
+            AiTriagePort triage,
             @Value("#{jobParameters['batchId']}") String batchId) {
         UUID id = UUID.fromString(batchId);
         IngestionBatchRepository.BatchSource source = batches.source(id);
@@ -185,7 +189,12 @@ public class IngestionJobConfiguration {
                 validator,
                 new SalesTransactionTransformer(schema),
                 new TriageRequestBuilder(id, schema, source.filename(), source.type()),
-                new DisabledAiTriagePort());
+                triage);
+    }
+
+    @Bean
+    AiTriagePort aiTriagePort(AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog) {
+        return new HttpAiTriageClient(properties, json, callLog);
     }
 
     @Bean

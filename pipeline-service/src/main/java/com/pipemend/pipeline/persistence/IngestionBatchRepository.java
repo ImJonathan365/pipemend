@@ -86,12 +86,15 @@ public class IngestionBatchRepository {
                         .update());
     }
 
+    /** ai_calls_count as AC-08.6 defines it: every logical call without a cache hit, the failed ones too. */
     public void complete(UUID batchId, Counts counts) {
         updateOne(
                 batchId,
                 jdbc.sql("""
                         UPDATE ingestion_batch SET status = 'COMPLETED', direct_count = :direct,
-                            auto_corrected_count = :autoCorrected, quarantined_count = :quarantined, finished_at = :now
+                            auto_corrected_count = :autoCorrected, quarantined_count = :quarantined, finished_at = :now,
+                            ai_calls_count = (SELECT count(*) FROM ai_call_log a
+                                WHERE a.batch_id = :id AND a.outcome <> 'CACHE_HIT')
                         WHERE id = :id
                         """)
                         .param("id", batchId)
