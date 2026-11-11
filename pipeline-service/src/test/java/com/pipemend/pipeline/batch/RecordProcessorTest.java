@@ -3,33 +3,49 @@ package com.pipemend.pipeline.batch;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
 import com.pipemend.pipeline.triage.AiTriagePort;
-import com.pipemend.pipeline.triage.DisabledAiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
+import com.pipemend.pipeline.triage.TriageResponseValidator;
+import com.pipemend.pipeline.triage.contract.Classification;
+import com.pipemend.pipeline.triage.contract.Severity;
+import com.pipemend.pipeline.triage.contract.TriageJson;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
+import com.pipemend.pipeline.triage.contract.TriageResponse;
 import com.pipemend.pipeline.validation.ErrorCode;
 import com.pipemend.pipeline.validation.Validator;
 import com.pipemend.pipeline.validation.Violation;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class RecordProcessorTest {
 
     static final UUID BATCH = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
+    private static final AiTriagePort AI_DOWN = request -> new TriageOutcome.Unavailable("ai-service is unreachable");
+
     private static RecordProcessor processor(SchemaDefinition schema, AiTriagePort triage) {
         return RecordTestSupport.processor(BATCH, schema, triage);
     }
 
-    private final RecordProcessor processor = processor(SchemaTestSupport.realSchema(), new DisabledAiTriagePort());
+    private final RecordProcessor processor = processor(SchemaTestSupport.realSchema(), AI_DOWN);
 
     @Test
     void ac_06_1_aValidRecordIsLoadedDirectWithoutTriage() {
@@ -133,7 +149,7 @@ class RecordProcessorTest {
         Map<String, String> row = RecordTestSupport.validRow();
         row.put("Price", "2.555");
 
-        ProcessedRecord result = processor(RecordTestSupport.schemaWithPriceScaleThree(), new DisabledAiTriagePort())
+        ProcessedRecord result = processor(RecordTestSupport.schemaWithPriceScaleThree(), AI_DOWN)
                 .process(new RawRecord.Parsed(5, row));
 
         assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
@@ -158,5 +174,88 @@ class RecordProcessorTest {
             assertThat(q.violations()).extracting(Violation::errorCode).containsExactly(ErrorCode.INVALID_ENUM_VALUE);
             assertThat(q.summary()).contains("boom").contains("country INVALID_ENUM_VALUE");
         });
+    }
+
+    static Stream<Arguments> docs02Section5_aFailedCall() {
+        return Stream.of(
+                arguments(new TriageOutcome.Unavailable("down"), QuarantineReason.AI_UNAVAILABLE),
+                arguments(new TriageOutcome.InvalidResponse("bad"), QuarantineReason.AI_INVALID_RESPONSE),
+                arguments(new TriageOutcome.BudgetExhausted("spent"), QuarantineReason.AI_BUDGET_EXCEEDED));
+    }
+
+    @ParameterizedTest
+    @MethodSource
+    void docs02Section5_aFailedCall(TriageOutcome outcome, QuarantineReason reason) {
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort port = request -> {
+            sent.add(request);
+            return outcome;
+        };
+
+        ProcessedRecord.Quarantined q = (ProcessedRecord.Quarantined)
+                processor(SchemaTestSupport.realSchema(), port).process(new RawRecord.Parsed(6, unknownCountry()));
+
+        assertThat(q.reason()).isEqualTo(reason);
+        assertThat(q.analysis()).isNull();
+        assertThat(q.aiRequestId()).isEqualTo(sent.getFirst().requestId());
+        // AC-11.2: the technical summary of the pipeline, never a text of the AI.
+        assertThat(q.summary()).contains("1 violation(s)").contains("country INVALID_ENUM_VALUE");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "triage-response.auto-fixable.json, AUTO_FIXABLE, LOW",
+        "triage-response.needs-human-review.json, NEEDS_HUMAN_REVIEW, HIGH"
+    })
+    void docs02Section5_everyValidAnalysisIsReviewedByAHumanUntilThePolicyExists(
+            String fixture, Classification decision, Severity maxSeverity) throws IOException {
+        String body = Files.readString(Path.of("..", "contracts", "fixtures", fixture));
+        TriageResponse response = TriageJson.parse(body);
+        AiTriagePort port = request -> new TriageOutcome.Analysed(
+                response, body, new TriageResponseValidator.Result.Valid(decision, maxSeverity));
+
+        ProcessedRecord.Quarantined q = (ProcessedRecord.Quarantined)
+                processor(SchemaTestSupport.realSchema(), port).process(new RawRecord.Parsed(6, unknownCountry()));
+
+        assertThat(q.reason()).isEqualTo(QuarantineReason.AI_REVIEW_REQUIRED);
+        assertThat(q.summary()).isEqualTo(response.summary());
+        assertThat(q.analysis()).isEqualTo(new ProcessedRecord.AiAnalysis(body, maxSeverity));
+        assertThat(q.aiRequestId()).isNotNull();
+    }
+
+    @Test
+    void nfr_03_aFailureAfterTheCallEndsAsProcessingErrorWithItsRequestId() {
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort logWriteFails = request -> {
+            sent.add(request);
+            throw new DataAccessResourceFailureException("ai_call_log is not writable");
+        };
+
+        ProcessedRecord.Quarantined q =
+                (ProcessedRecord.Quarantined) processor(SchemaTestSupport.realSchema(), logWriteFails)
+                        .process(new RawRecord.Parsed(6, unknownCountry()));
+
+        assertThat(q.reason()).isEqualTo(QuarantineReason.PROCESSING_ERROR);
+        assertThat(q.aiRequestId()).isEqualTo(sent.getFirst().requestId());
+        assertThat(q.analysis()).isNull();
+    }
+
+    @Test
+    void aFailureBeforeAnyCallLeavesNoRequestId() {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put("Price", "2.555");
+
+        ProcessedRecord.Quarantined q =
+                (ProcessedRecord.Quarantined) processor(RecordTestSupport.schemaWithPriceScaleThree(), AI_DOWN)
+                        .process(new RawRecord.Parsed(5, row));
+
+        assertThat(q.reason()).isEqualTo(QuarantineReason.PROCESSING_ERROR);
+        assertThat(q.aiRequestId()).isNull();
+    }
+
+    private static Map<String, String> unknownCountry() {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put("Country", "Atlantis");
+        return row;
     }
 }

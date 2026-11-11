@@ -9,8 +9,11 @@ import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
 import com.pipemend.pipeline.batch.RawRecord;
 import com.pipemend.pipeline.batch.RecordTestSupport;
 import com.pipemend.pipeline.schema.SchemaDefinition;
-import com.pipemend.pipeline.triage.DisabledAiTriagePort;
+import com.pipemend.pipeline.triage.TriageOutcome;
+import com.pipemend.pipeline.triage.contract.Severity;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -52,6 +55,7 @@ class ProcessedRecordWriterTest {
 
     private ProcessedRecordWriter writer;
     private UUID batchId;
+    private UUID lastRequestId;
 
     @BeforeEach
     void setUp() {
@@ -101,7 +105,7 @@ class ProcessedRecordWriterTest {
                 .containsEntry("ai_analysis", null)
                 .containsEntry("max_severity", null)
                 .containsEntry("policy_decision", null)
-                .containsEntry("ai_request_id", null);
+                .containsEntry("ai_request_id", lastRequestId);
         assertThat(json.readValue((String) row.get("raw"), new TypeReference<Map<String, String>>() {}))
                 .isEqualTo(raw);
         List<Map<String, Object>> violations =
@@ -229,11 +233,45 @@ class ProcessedRecordWriterTest {
     }
 
     @Test
+    void ac_11_1_anAnalysedRecordKeepsTheAnalysisItsSeverityAndItsRequestId() throws Exception {
+        String body =
+                Files.readString(Path.of("..", "contracts", "fixtures", "triage-response.needs-human-review.json"));
+        UUID requestId = UUID.randomUUID();
+        write(new ProcessedRecord.Quarantined(
+                batchId,
+                3,
+                Map.of("Country", "Atlantis"),
+                List.of(),
+                QuarantineReason.AI_REVIEW_REQUIRED,
+                "summary of the AI",
+                new ProcessedRecord.AiAnalysis(body, Severity.HIGH),
+                requestId));
+
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT ai_analysis::text AS ai_analysis, max_severity, ai_request_id, policy_decision, summary
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(row)
+                .containsEntry("max_severity", "HIGH")
+                .containsEntry("ai_request_id", requestId)
+                .containsEntry("policy_decision", null)
+                .containsEntry("summary", "summary of the AI");
+        assertThat(json.readTree((String) row.get("ai_analysis"))).isEqualTo(json.readTree(body));
+    }
+
+    @Test
     void aDatabaseErrorInAWriterFailsTheWholeChunkInsteadOfQuarantining() {
         ProcessedRecord valid = process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow()));
         // Its batch does not exist, so the foreign key fails after the clean row of the same chunk was written.
         ProcessedRecord orphan = new ProcessedRecord.Quarantined(
-                UUID.randomUUID(), 2, Map.of("_rawLine", "x"), List.of(), QuarantineReason.AI_UNAVAILABLE, "x");
+                UUID.randomUUID(),
+                2,
+                Map.of("_rawLine", "x"),
+                List.of(),
+                QuarantineReason.AI_UNAVAILABLE,
+                "x",
+                null,
+                null);
 
         assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> {
                     try {
@@ -248,7 +286,10 @@ class ProcessedRecordWriterTest {
     }
 
     private ProcessedRecord process(SchemaDefinition schema, RawRecord record) {
-        return RecordTestSupport.processor(batchId, schema, new DisabledAiTriagePort())
+        return RecordTestSupport.processor(batchId, schema, request -> {
+                    lastRequestId = request.requestId();
+                    return new TriageOutcome.Unavailable("ai-service is unreachable");
+                })
                 .process(record);
     }
 
