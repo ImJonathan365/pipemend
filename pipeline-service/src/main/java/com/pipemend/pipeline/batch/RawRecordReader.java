@@ -26,7 +26,8 @@ import org.springframework.core.io.Resource;
 
 /**
  * Reads a UTF-8, comma-separated, strict RFC 4180 CSV with a header row (FR-01). Never throws because of a record's
- * content: a wrong column count or a quote in the middle of an unquoted field becomes {@link RawRecord.Malformed}.
+ * content: a wrong column count or a quote in the middle of an unquoted field becomes {@link RawRecord.Malformed}. The
+ * one exception is U+0000, which rejects the whole file.
  * Restartable: the position of the last committed record lives in the step's {@link ExecutionContext} (NFR-04).
  */
 public final class RawRecordReader implements ItemStreamReader<RawRecord> {
@@ -74,6 +75,7 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
             return null;
         }
         int number = records.getCurrentItemCount();
+        rejectNul(line, "record " + number);
         Split split = split(line);
         List<String> names = headers();
         if (split.status() == Status.STRAY_QUOTE) {
@@ -115,6 +117,7 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
     }
 
     private void readHeader(String line) {
+        rejectNul(line, "the header row");
         Split split = split(line);
         // OPEN_QUOTE cannot reach here: skipped lines also go through the record separator policy (D69).
         if (split.status() != Status.COMPLETE) {
@@ -133,6 +136,16 @@ public final class RawRecordReader implements ItemStreamReader<RawRecord> {
             }
         }
         headers = split.fields();
+    }
+
+    /**
+     * PostgreSQL takes U+0000 neither in text nor in jsonb, so such a row could be neither loaded nor quarantined. The
+     * intake counts with this same reader, so the batch is rejected before any row is processed (AC-01.7).
+     */
+    private static void rejectNul(String line, String where) {
+        if (line.indexOf(0) >= 0) {
+            throw new InvalidFileFormatException(where + " contains U+0000");
+        }
     }
 
     private enum Status {

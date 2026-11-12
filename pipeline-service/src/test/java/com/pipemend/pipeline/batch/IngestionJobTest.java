@@ -2,6 +2,7 @@ package com.pipemend.pipeline.batch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.pipemend.pipeline.PostgresTestConfiguration;
 import java.io.IOException;
@@ -13,7 +14,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
@@ -122,6 +127,42 @@ class IngestionJobTest {
         UUID batchId = receive(concat(firstLines(150), new byte[] {(byte) 0xC3, 0x28, '\n'}));
 
         assertRejected(batchId, launch(batchId), "INVALID_FILE_FORMAT");
+    }
+
+    static Stream<Arguments> ac_01_7_aNulByteRejectsTheBatchInTheIntake() {
+        String nul = String.valueOf((char) 0);
+        String header = "Invoice,StockCode,Description,Quantity,InvoiceDate,Price,Customer ID,Country\n";
+        String valid = "536365,85123A,WHITE HEART,6,2010-12-01 08:26:00,2.55,17850,United Kingdom\n";
+        return Stream.of(
+                arguments("in a valid row", header + valid.replace("WHITE HEART", "WHITE" + nul + "HEART")),
+                arguments(
+                        "in an invalid row",
+                        header
+                                + valid.replace("WHITE HEART", "WHITE" + nul + "HEART")
+                                        .replace("United Kingdom", "Atlantis")),
+                arguments("in the invalid field", header + valid.replace("United Kingdom", "Atl" + nul + "antis")),
+                arguments(
+                        "in a malformed row",
+                        header
+                                + valid.replace("WHITE HEART", "WHITE" + nul + "HEART")
+                                        .replace("\n", ",extra\n")),
+                arguments("in the header", header.replace("Country", "Coun" + nul + "try") + valid));
+    }
+
+    /** PostgreSQL takes U+0000 neither in text nor in jsonb: no row of such a file could be loaded or quarantined. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void ac_01_7_aNulByteRejectsTheBatchInTheIntake(String where, String csv) throws Exception {
+        String valid = "536366,85123A,WHITE HEART,6,2010-12-01 08:26:00,2.55,17850,United Kingdom\n";
+        UUID batchId = receive(bytes(csv + valid));
+
+        JobExecution execution = launch(batchId);
+
+        assertRejected(batchId, execution, "INVALID_FILE_FORMAT");
+        assertThat(execution.getStepExecutions())
+                .extracting(StepExecution::getStepName)
+                .containsExactly("intakeStep");
+        assertThat(count("ai_call_log", batchId, "true")).isZero();
     }
 
     @Test
