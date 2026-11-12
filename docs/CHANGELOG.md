@@ -1205,8 +1205,9 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     - **Medido:** el cuerpo trae U+0000 como el escape JSON `\u0000`, seis caracteres que `text` admite, así que
       `error_detail` guarda el cuerpo sin cambios. La sustitución por U+FFFD de D131 solo actúa con un byte NUL
       literal.
-    - **Supuesto, sin test:** ese byte NUL ya lo rechaza `TriageJson`, porque Jackson no admite caracteres de control
-      sin escapar.
+    - ~~Supuesto, sin test~~ **Medido con test** (2026-11-11, rama `fix/FR-01-FR-08-unstorable-values`): `TriageJson`
+      rechaza el byte NUL literal, porque Jackson no admite caracteres de control sin escapar, y `error_detail` lo
+      guarda como U+FFFD.
   - D142: los tests de Spring apuntan a `http://127.0.0.1:1` desde `PostgresTestConfiguration`.
     `IngestionJobTriageTest` registra un `HttpAiTriageClient` real con `@Primary` que apunta a WireMock, porque el
     `DynamicPropertyRegistrar` común gana a `@DynamicPropertySource` (medido: con la propiedad, el job seguía
@@ -1230,3 +1231,47 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Sprint 4: `CorrectionPolicy` y el motivo definitivo de un `AUTO_FIXABLE`, reintentos, circuit breaker,
     `AiBudget`, el lote agotado ante `429 LLM_BUDGET_EXHAUSTED`, el invariante de timeouts de NFR-07, AC-12.2 y
     AC-12.5.
+
+## Sprint 3 — Valores que PostgreSQL no puede guardar (2026-11-11)
+- Hecho: el byte NUL en un CSV de entrada (FR-01) y un número fuera del rango de `numeric` en la respuesta de
+  `ai-service` (FR-08) ya no dejan el lote en `FAILED`. Es una sola rama con dos FR, por decisión del owner.
+- Medido antes del arreglo, con tests de job y PostgreSQL real:
+  - Un byte NUL en el CSV dejaba el lote en `FAILED` con `INFRASTRUCTURE_ERROR` en los cinco casos: fila válida, fila
+    inválida, campo inválido, fila `MALFORMED_ROW` y cabecera. Fallaba `sales_transaction` (`text`: `invalid byte
+    sequence for encoding "UTF8": 0x00`), `quarantine_record` (`jsonb`: `unsupported Unicode escape sequence`) o el
+    informe de drift. Ninguna fila llegó a `sales_transaction`.
+  - Un número como `1e1000000` en `correction.parameters`, en un array o en una clave desconocida pasaba
+    `TriageJson` y el validador, y hacía fallar el `INSERT` de `ai_analysis` con `value overflows numeric format`.
+    Mismo resultado: `FAILED` con `INFRASTRUCTURE_ERROR`.
+- Límites de `numeric` medidos en `postgres:18-alpine`:
+  - Se aceptan `1e131071`, `1.0e131071`, `1e-16383` y `1.5e-16382`.
+  - Fallan `1e131072`, `-1e131072`, `10e131071`, `1e-16384`, `1.5e-16383` y `1.50e-16382`: PostgreSQL cuenta también
+    los ceros finales de la escala.
+- Decisión del owner (2026-11-11): "Apruebo la rama fix/FR-01-FR-08-unstorable-values desde dev, que toca FR-01 y
+  FR-08 en un solo PR: que RawRecordReader rechace con INVALID_FILE_FORMAT un archivo cuya cabecera o cualquier línea
+  contenga U+0000, con la nota en docs/02 l.141 y AC-01.7; que HttpAiTriageClient trate como AI_INVALID_RESPONSE una
+  respuesta con un número de más de 131072 dígitos enteros o más de 16383 decimales en cualquier punto del cuerpo, con
+  la frase añadida en la nota de docs/06 A.5; añadir el test del byte NUL literal en la respuesta, sin cambio de
+  código; escribir primero los tests de los cinco casos de NUL de entrada y mostrarlos en rojo en el PR; y añadir la
+  entrada al CHANGELOG."
+- Decisiones:
+  - D143: `RawRecordReader` lanza `InvalidFileFormatException` si la cabecera o un registro contiene U+0000. Como
+    `intakeStep` cuenta con el mismo lector, el lote queda `REJECTED` con `INVALID_FILE_FORMAT` antes de procesar
+    ninguna fila, sin escribir en `sales_transaction`, `quarantine_record` ni `ai_call_log` (AC-01.7, `02` l.141).
+    | Alternativas: convertir la fila en `MALFORMED_ROW` y sustituir el carácter al guardarla; un `ErrorCode` nuevo |
+    Reversible: sí | Aprobado por: owner.
+  - D144: `HttpAiTriageClient` comprueba cada número del cuerpo con el mismo recorrido del árbol que ya busca U+0000:
+    - el árbol se lee con `USE_BIG_DECIMAL_FOR_FLOATS` y sin `STRIP_TRAILING_BIGDECIMAL_ZEROES`;
+    - dígitos enteros = max(precision − scale, 0), calculado en `long` porque `1e2147483647` desborda un `int`;
+    - decimales = max(scale, 0);
+    - se rechaza si pasa de 131 072 dígitos enteros o de 16 383 decimales.
+
+    El resultado es `AI_INVALID_RESPONSE` con `ai_analysis` en `null`. | Alternativas: exigir que el número quepa en
+    un `double`, lo que rechazaría `1e400`, que PostgreSQL admite | Reversible: sí | Aprobado por: owner.
+  - D145: el byte NUL literal en la respuesta no necesitó código. El test nuevo confirma el supuesto de D141, que queda
+    actualizado arriba.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/02-requisitos-funcionales.md` (l.141 y
+  AC-01.7), `docs/06-contrato-api.md` (nota de A.5) y `docs/CHANGELOG.md`, incluida la actualización de D141.
+  `contracts/` no cambia.
+- Pendiente: el lector JSON de FR-02 (Sprint 6) debe aplicar la regla de `02` l.141 a U+0000, literal o escapado. No se
+  escribe código para eso ahora.
