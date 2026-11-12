@@ -1275,3 +1275,27 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `contracts/` no cambia.
 - Pendiente: el lector JSON de FR-02 (Sprint 6) debe aplicar la regla de `02` l.141 a U+0000, literal o escapado. No se
   escribe código para eso ahora.
+
+## Sprint 3 — Número que `BigDecimal` no puede leer en la respuesta (2026-11-11)
+- Corregido después de fusionar el #44 (hallado por el revisor): `TriageJson` acepta `1e2147483648` dentro de
+  `correction.parameters`, porque ese mapa no tiene tipo y el valor queda en `Infinity`. Después, `TREE_READER.readTree`
+  lanzaba `NumberFormatException` ("value exceeds limits"), y lo mismo pasaba con `1e-2147483649` y `1e99999999999`. La
+  excepción salía de `triage()` sin pasar por `save()`. Consecuencias:
+  - la fila acababa en `PROCESSING_ERROR`;
+  - no quedaba fila en `ai_call_log`.
+
+  Eso incumplía AC-08.5 y AC-12.3 y contradecía la nota de `06` A.5. Medido con tests en rojo antes del arreglo.
+- Arreglo: `answer()` captura `NumberFormatException` y `JacksonException` alrededor de `TREE_READER.readTree` y las
+  trata como una respuesta inválida con el texto fijo de un número que no cabe en `numeric`, sin el mensaje de la
+  excepción. No se captura `Exception`. Resultado: `AI_INVALID_RESPONSE`, una fila `INVALID_RESPONSE` en
+  `ai_call_log` y el cuerpo en `error_detail`.
+- Decisión del owner (2026-11-11): "Apruebo la rama fix/FR-08-unparseable-number desde dev: que HttpAiTriageClient
+  trate como AI_INVALID_RESPONSE, con su fila INVALID_RESPONSE en ai_call_log y el cuerpo en error_detail, una
+  respuesta cuyo árbol JSON no se pueda leer con BigDecimal, y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D146: `NumberFormatException` y `JacksonException` llevan al mismo texto fijo que D144, porque ambas significan que
+    el cuerpo no cabe en `jsonb`. | Alternativas: un texto propio para cada una | Reversible: sí | Aprobado por: owner.
+- Sin cambios en `docs/06`: la nota de A.5 ya cubre "un número que no cabe en `numeric`".
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`.
+- Sin verificar: la rama de `JacksonException` no tiene test. Un cuerpo que ya aceptó `TriageJson` no debería fallar
+  como JSON en el lector del árbol, así que la captura es solo una defensa.
