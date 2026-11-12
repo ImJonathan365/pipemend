@@ -79,7 +79,8 @@ class IngestionJobTriageTest {
         NUL_IN_A_PARAMETER,
         NUL_IN_AN_UNKNOWN_KEY,
         SOH_IN_SUMMARY,
-        HUGE_NUMBER_IN_A_PARAMETER
+        HUGE_NUMBER_IN_A_PARAMETER,
+        UNPARSEABLE_NUMBER_IN_A_PARAMETER
     }
 
     private static volatile Mutation mutation = Mutation.NONE;
@@ -172,6 +173,25 @@ class IngestionJobTriageTest {
     }
 
     @Test
+    void docs06A5_anAnswerWithANumberBigDecimalCannotReadIsAnInvalidResponse() throws Exception {
+        mutation = Mutation.UNPARSEABLE_NUMBER_IN_A_PARAMETER;
+        UUID batchId = receive((HEADER + UNKNOWN_COUNTRY).getBytes(StandardCharsets.UTF_8));
+
+        assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        assertThat(quarantined(batchId))
+                .containsEntry("quarantine_reason", "AI_INVALID_RESPONSE")
+                .containsEntry("ai_analysis", null)
+                .containsEntry("max_severity", null);
+        assertThat(count("sales_transaction", batchId, "true")).isZero();
+        assertThat(count(
+                        "ai_call_log",
+                        batchId,
+                        "outcome = 'INVALID_RESPONSE' AND strpos(error_detail, '1e2147483648') > 0"))
+                .isEqualTo(1);
+    }
+
+    @Test
     void docs06A5_anAnswerWithUPlus0001IsAccepted() throws Exception {
         mutation = Mutation.SOH_IN_SUMMARY;
         UUID batchId = receive((HEADER + UNKNOWN_COUNTRY).getBytes(StandardCharsets.UTF_8));
@@ -235,6 +255,9 @@ class IngestionJobTriageTest {
                 correction.set("originalValue", violation.get("receivedValue"));
                 correction.put("proposedValue", "echo");
                 ObjectNode parameters = correction.putObject("parameters");
+                if (mutation == Mutation.UNPARSEABLE_NUMBER_IN_A_PARAMETER) {
+                    parameters.put("n", "@number@");
+                }
                 if (mutation == Mutation.HUGE_NUMBER_IN_A_PARAMETER) {
                     parameters.put("n", new BigDecimal("1e1000000"));
                 }
@@ -255,7 +278,9 @@ class IngestionJobTriageTest {
             if (mutation == Mutation.NUL_IN_AN_UNKNOWN_KEY) {
                 answer.put("extra\u0000key", 1);
             }
-            return Response.Builder.like(response).but().body(answer.toString()).build();
+            // BigDecimal cannot hold this exponent, so it goes into the body as text.
+            String body = answer.toString().replace("\"@number@\"", "1e2147483648");
+            return Response.Builder.like(response).but().body(body).build();
         }
 
         @Override
