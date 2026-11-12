@@ -5,6 +5,7 @@ import com.pipemend.pipeline.persistence.AiCallLogRepository.Outcome;
 import com.pipemend.pipeline.triage.contract.TriageJson;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
 import com.pipemend.pipeline.triage.contract.TriageResponse;
+import java.math.BigDecimal;
 import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -36,7 +38,16 @@ public final class HttpAiTriageClient implements AiTriagePort {
     static final String BATCH_ID_HEADER = "X-Batch-Id";
 
     private static final Logger log = LoggerFactory.getLogger(HttpAiTriageClient.class);
-    private static final JsonMapper TREE_READER = JsonMapper.builder().build();
+    // Without these, 1e-1000000 would read as 0.0 and 1.50 as 1.5, and the numeric limits could not be checked.
+    private static final JsonMapper TREE_READER = JsonMapper.builder()
+            .enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+            .build();
+    // numeric holds 131072 digits before the point and 16383 after, trailing zeros included (postgres:18-alpine).
+    static final int NUMERIC_MAX_INTEGER_DIGITS = 131072;
+    static final int NUMERIC_MAX_DECIMALS = 16383;
+    private static final String HAS_NUL = "has U+0000 in a key or a string";
+    private static final String HAS_HUGE_NUMBER = "has a number that PostgreSQL numeric cannot hold";
     // Only these go into a detail or a log line; any other code goes to error_code alone.
     private static final Set<String> KNOWN_CODES = Set.of(
             "INVALID_REQUEST",
@@ -112,9 +123,10 @@ public final class HttpAiTriageClient implements AiTriagePort {
         } catch (TriageJson.InvalidTriageJsonException e) {
             return invalidAnswer(request, received, latencyMs, "is not valid against the contract");
         }
-        // PostgreSQL takes U+0000 neither in text nor in jsonb, and ai_analysis keeps the whole body (docs/06 A.5).
-        if (hasNul(TREE_READER.readTree(received.body()))) {
-            return invalidAnswer(request, received, latencyMs, "has U+0000 in a key or a string");
+        // ai_analysis keeps the whole body, so all of it must fit in jsonb (docs/06 A.5).
+        String unstorable = unstorable(TREE_READER.readTree(received.body()));
+        if (unstorable != null) {
+            return invalidAnswer(request, received, latencyMs, unstorable);
         }
         // ai_call_log.llm_calls is a smallint; ai-service never makes more than 3 (NFR-07).
         if (response.meta().llmCalls() > Short.MAX_VALUE) {
@@ -222,24 +234,39 @@ public final class HttpAiTriageClient implements AiTriagePort {
         }
     }
 
-    /** Also in the keys TriageJson ignores. */
-    private static boolean hasNul(JsonNode node) {
+    /** Why PostgreSQL would reject the body in jsonb, or null. Also in the keys TriageJson ignores. */
+    private static @Nullable String unstorable(JsonNode node) {
         if (node.isString()) {
-            return node.asString().indexOf(0) >= 0;
+            return node.asString().indexOf(0) >= 0 ? HAS_NUL : null;
+        }
+        if (node.isNumber()) {
+            return fitsNumeric(node.decimalValue()) ? null : HAS_HUGE_NUMBER;
         }
         for (Map.Entry<String, JsonNode> property : node.properties()) {
-            if (property.getKey().indexOf(0) >= 0 || hasNul(property.getValue())) {
-                return true;
+            if (property.getKey().indexOf(0) >= 0) {
+                return HAS_NUL;
+            }
+            String inValue = unstorable(property.getValue());
+            if (inValue != null) {
+                return inValue;
             }
         }
         if (node.isArray()) {
             for (JsonNode element : node) {
-                if (hasNul(element)) {
-                    return true;
+                String inElement = unstorable(element);
+                if (inElement != null) {
+                    return inElement;
                 }
             }
         }
-        return false;
+        return null;
+    }
+
+    /** In long: the scale of 1e2147483647 is Integer.MIN_VALUE + 1, and precision - scale would overflow an int. */
+    private static boolean fitsNumeric(BigDecimal number) {
+        long integerDigits = Math.max((long) number.precision() - number.scale(), 0);
+        long decimals = Math.max(number.scale(), 0);
+        return integerDigits <= NUMERIC_MAX_INTEGER_DIGITS && decimals <= NUMERIC_MAX_DECIMALS;
     }
 
     private static @Nullable MediaType contentType(HttpHeaders headers) {

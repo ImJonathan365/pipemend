@@ -118,6 +118,16 @@ class RawRecordReaderTest {
                 .hasMessageContaining("UTF-8");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"a,b\n1,2\n3,x@y\n", "a,b\n1,\"x\ny@z\"\n", "a,b\n1,2,3@\n", "a,b@\n1,2\n"})
+    void ac_01_7_aNulAnywhereIsAnInvalidFileFormat(String csv) {
+        byte[] file = bytes(csv.replace('@', (char) 0));
+
+        assertThatThrownBy(() -> readAll(file))
+                .isInstanceOf(InvalidFileFormatException.class)
+                .hasMessageContaining("U+0000");
+    }
+
     @Test
     void anEmptyFileIsAnInvalidFileFormat() {
         assertThatThrownBy(() -> open(new byte[0]))

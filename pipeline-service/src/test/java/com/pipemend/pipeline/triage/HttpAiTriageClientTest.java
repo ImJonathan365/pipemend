@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -251,6 +252,84 @@ class HttpAiTriageClientTest {
                 .containsEntry("provider", null)
                 // The body carries the six characters of the JSON escape, which text admits; never U+0000 itself.
                 .containsEntry("error_detail", body);
+    }
+
+    /** The number goes into the body as written, in place of a placeholder string. */
+    private static String withNumber(String where, String number) {
+        ObjectNode body = validAnswer();
+        ObjectNode parameters =
+                (ObjectNode) body.get("analyses").get(0).get("correction").get("parameters");
+        switch (where) {
+            case "parameter" -> parameters.put("n", "@number@");
+            case "array" -> parameters.putArray("l").add("@number@");
+            default -> body.put("extra", "@number@");
+        }
+        return body.toString().replace("\"@number@\"", number);
+    }
+
+    @ParameterizedTest(name = "{1} in {0}")
+    @CsvSource({
+        "parameter, 1e1000000",
+        "unknown key, 1e-20000",
+        "array, 1e1000000",
+        "parameter, 1.5e-16383",
+        "parameter, -1e131072",
+        "parameter, 10e131071",
+        "parameter, 1.50e-16382",
+        "parameter, 1e2147483647",
+        "parameter, 1e-2147483647"
+    })
+    void docs06A5_aNumberPostgresCannotStoreIsAnInvalidResponse(String where, String number) {
+        String body = withNumber(where, number);
+        answer(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(body));
+
+        assertThat(client.triage(request))
+                .isEqualTo(new TriageOutcome.InvalidResponse(
+                        "The answer of ai-service has a number that PostgreSQL numeric cannot hold"));
+        assertThat(onlyRow())
+                .containsEntry("outcome", "INVALID_RESPONSE")
+                .containsEntry("http_status", 200)
+                .containsEntry("provider", null)
+                .containsEntry("error_detail", body);
+    }
+
+    /** The exact limits of numeric on postgres:18-alpine: 131072 integer digits and 16383 decimals, zeros included. */
+    @ParameterizedTest(name = "{1} in {0}")
+    @CsvSource({
+        "parameter, 1e131071",
+        "parameter, 1e-16383",
+        "parameter, 1.5e-16382",
+        "unknown key, 1.0e131071",
+        "array, -1e131071"
+    })
+    void docs06A5_aNumberAtTheLimitsOfNumericIsAccepted(String where, String number) {
+        answer(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(withNumber(where, number)));
+
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.Analysed.class);
+        assertThat(onlyRow()).containsEntry("outcome", "SUCCESS");
+    }
+
+    /** D141: a literal NUL byte is not valid JSON, and error_detail stores it as U+FFFD (D131). */
+    @Test
+    void docs06A5_aLiteralNulByteIsAnInvalidResponse() {
+        String nul = String.valueOf((char) 0);
+        String body = validAnswer().put("summary", "@summary@").toString().replace("@summary@", "a" + nul + "b");
+        answer(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody(body));
+
+        assertThat(client.triage(request)).isInstanceOf(TriageOutcome.InvalidResponse.class);
+        String stored = (String) onlyRow().get("error_detail");
+        assertThat(onlyRow()).containsEntry("outcome", "INVALID_RESPONSE");
+        assertThat(stored).contains(String.valueOf((char) 0xFFFD)).doesNotContain(nul);
+        assertThat(stored).isEqualTo(body.replace(nul, String.valueOf((char) 0xFFFD)));
     }
 
     @Test
