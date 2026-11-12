@@ -124,7 +124,13 @@ public final class HttpAiTriageClient implements AiTriagePort {
             return invalidAnswer(request, received, latencyMs, "is not valid against the contract");
         }
         // ai_analysis keeps the whole body, so all of it must fit in jsonb (docs/06 A.5).
-        String unstorable = unstorable(TREE_READER.readTree(received.body()));
+        String unstorable;
+        try {
+            unstorable = unstorable(TREE_READER.readTree(received.body()));
+        } catch (NumberFormatException | JacksonException e) {
+            // TriageJson took the number as Infinity in an untyped map; BigDecimal cannot hold its exponent at all.
+            unstorable = HAS_HUGE_NUMBER;
+        }
         if (unstorable != null) {
             return invalidAnswer(request, received, latencyMs, unstorable);
         }

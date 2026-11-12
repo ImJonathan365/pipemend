@@ -277,7 +277,11 @@ class HttpAiTriageClientTest {
         "parameter, 10e131071",
         "parameter, 1.50e-16382",
         "parameter, 1e2147483647",
-        "parameter, 1e-2147483647"
+        "parameter, 1e-2147483647",
+        // Beyond the int scale of BigDecimal: the tree cannot even be read (NumberFormatException).
+        "parameter, 1e2147483648",
+        "unknown key, 1e-2147483649",
+        "array, 1e99999999999"
     })
     void docs06A5_aNumberPostgresCannotStoreIsAnInvalidResponse(String where, String number) {
         String body = withNumber(where, number);
