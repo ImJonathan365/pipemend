@@ -12,6 +12,7 @@ Este documento define dos contratos:
 - **Dos fronteras, dos reglas** (antes se contradecían `06` y `09` §7.5): <!-- rev: R-21 -->
   - *LLM → `ai-service`* (no confiable): validación estricta, `extra="forbid"`; cualquier campo inventado o enum desconocido es salida inválida (reparación o `502 LLM_INVALID_OUTPUT`).
   - *`ai-service` → pipeline* (contrato versionado): el pipeline ignora campos desconocidos, falla ante enums desconocidos o campos obligatorios ausentes, y aplica la validación semántica de AC-08.7. Ambas fallas → `AI_INVALID_RESPONSE`.
+  - *pipeline → `ai-service`* (request): un campo desconocido es un bug de contrato y se responde `422 VALIDATION_ERROR` (`extra="forbid"`). Los dos servicios se despliegan juntos, así que el pipeline nunca envía un campo que `ai-service` no conozca. <!-- owner, 2026-10-24 -->
 - Errores: `application/problem+json` (RFC 9457) con extensiones `code` y `requestId` (NFR-20).
 - Enums en MAYÚSCULAS_CON_GUION_BAJO.
 - Fuente de verdad del contrato interno: los modelos Pydantic de `ai-service/app/domain/contracts.py`, exportados a `contracts/ai-service.openapi.json`. Este documento y esa spec deben coincidir; si difieren, se corrige la que esté mal mediante PR que actualice ambos.
@@ -28,7 +29,7 @@ Base URL interna: `http://ai-service:8000`
 | Header | Obligatorio | Descripción |
 |---|---|---|
 | `Content-Type: application/json` | Sí | |
-| `X-Request-Id` | Sí | UUID generado por el pipeline; se devuelve igual en la respuesta |
+| `X-Request-Id` | Sí | UUID generado por el pipeline; se devuelve igual en la respuesta. Si falta, `ai-service` genera uno; si no es un UUID, responde `422 VALIDATION_ERROR` <!-- owner, 2026-11-03 --> |
 | `X-Batch-Id` | Sí | UUID del lote, solo para logs |
 
 ## A.1 `POST /v1/triage`
@@ -106,7 +107,7 @@ Analiza **un registro** con una o más violaciones.
 | `violations[].sourceHeader` | string\|null | No | |
 | `violations[].errorCode` | enum | Sí | Catálogo de `02` §3 (excepto `SCHEMA_DRIFT`) |
 | `violations[].receivedValue` | string\|null | Sí | |
-| `violations[].expected` | object | Sí | Claves posibles: `type`, `format`, `pattern`, `min`, `max`, `maxLength`, `scale`, `decimalSeparator`, `allowedValues`, `rule` |
+| `violations[].expected` | object | Sí | Claves posibles: `type`, `format`, `pattern`, `min`, `max`, `maxLength`, `scale`, `decimalSeparator`, `allowedValues`, `rule`, `expectedColumns`, `receivedColumns`. Las dos últimas son de `MALFORMED_ROW` (AC-07.4): columnas de la cabecera y columnas de la fila, `null` si la línea no se pudo separar en columnas <!-- owner, 2026-10-24 --> |
 | `violations[].technicalMessage` | string (≤ 1000) | Sí | |
 | `violations[].exceptionType` | string\|null | No | |
 | `options.explanationLanguage` | `es\|en` | No | Default: `AI_EXPLANATION_LANGUAGE` |
@@ -207,6 +208,8 @@ Ejemplo de violación que requiere humano:
 | `maxSeverity` | `LOW\|MEDIUM\|HIGH\|CRITICAL` | Máximo de `analyses[].severity` |
 | `summary` | string (≤ 1000) | Resumen legible del registro. `ai-service` **recorta** textos que excedan su máximo (no es error de contrato) |
 | `analyses` | array | **Exactamente una** por `violationId` recibido, mismo orden. El pipeline lo verifica (AC-08.7) |
+| `analyses[].violationId` | string | Obligatorio. El de la violación que analiza <!-- owner, 2026-10-24 --> |
+| `analyses[].field` | string | Obligatorio. Igual al `field` de esa violación (AC-08.7) |
 | `analyses[].rootCause` | enum | `FORMAT_MISMATCH`, `LOCALE_FORMAT`, `WHITESPACE`, `CASING`, `SYNONYM`, `NULL_TOKEN`, `MISSING_VALUE`, `IMPLAUSIBLE_VALUE`, `TYPE_MISMATCH`, `AMBIGUOUS_VALUE`, `BUSINESS_RULE`, `STRUCTURAL`, `UNKNOWN` |
 | `analyses[].explanation` | string (≤ 800) | |
 | `analyses[].severity` | enum | Ver tabla de severidad abajo |
@@ -324,15 +327,20 @@ Regla general (NFR-07): el pipeline **no** reintenta errores que traen `code` de
 | HTTP | `code` | Cuándo | ¿Pipeline reintenta? | ¿Cuenta para el circuit breaker? | Resultado en el pipeline |
 |---|---|---|---|---|---|
 | 400 | `INVALID_REQUEST` | Request que no cumple el contrato (semántica) | No | No | `AI_INVALID_RESPONSE` + log `ERROR` (indica bug de contrato) |
+| 404 | `NOT_FOUND` | Ruta que no existe <!-- owner, 2026-11-03 --> | No | No | igual que 400 |
+| 405 | `METHOD_NOT_ALLOWED` | Método que la ruta no admite; conserva la cabecera `Allow` <!-- owner, 2026-11-03 --> | No | No | igual que 400 |
 | 422 | `VALIDATION_ERROR` | Validación de FastAPI/Pydantic | No | No | igual que 400 |
 | 429 | `RATE_LIMITED` | El proveedor limitó y el reintento interno no alcanzó | No | Sí | `AI_UNAVAILABLE` |
 | 429 | `LLM_BUDGET_EXHAUSTED` | Se alcanzó `LLM_MAX_CALLS_PER_DAY` (AC-08.8) | No | No | `AI_BUDGET_EXCEEDED`; el presupuesto del lote se marca agotado |
+| 500 | `INTERNAL_ERROR` | Error inesperado de `ai-service`; el `detail` nunca describe la causa <!-- owner, 2026-11-03 --> | No | Sí | `AI_UNAVAILABLE` |
 | 502 | `LLM_INVALID_OUTPUT` | Salida del LLM inválida tras reparación | No (con `temperature = 0` repetir da la misma salida) | No | `AI_INVALID_RESPONSE` |
 | 502 | `LLM_PROVIDER_ERROR` | Error del proveedor (5xx, auth) | No | Sí | `AI_UNAVAILABLE` |
 | 503 | `PROVIDER_NOT_CONFIGURED` | Falta API key u otra config | No | Sí (abre rápido el circuito) | `AI_UNAVAILABLE` |
 | 504 | `LLM_TIMEOUT` | Se agotó el plazo `AI_REQUEST_DEADLINE_SECONDS` | No | Sí | `AI_UNAVAILABLE` |
-| — | (transporte) | Conexión rechazada / timeout de conexión / 5xx sin `problem+json` | Sí (2, backoff) | Sí | `AI_UNAVAILABLE` |
+| — | (transporte) | Conexión rechazada / timeout de conexión / 502/503/504 sin `problem+json` <!-- owner, 2026-11-03 --> | Sí (2, backoff) | Sí | `AI_UNAVAILABLE` |
 | — | (transporte) | *Read timeout* del pipeline | No | Sí | `AI_UNAVAILABLE` |
+
+Una respuesta `200` con U+0000 (`\u0000`) en cualquier clave o cadena, incluidas las claves que el pipeline ignora, no cumple el contrato y termina en `AI_INVALID_RESPONSE`: PostgreSQL no admite ese carácter ni en `text` ni en `jsonb`, y `ai_analysis` guarda el cuerpo tal cual. <!-- owner, 2026-11-08 --> Lo mismo con un número que no cabe en `numeric` de PostgreSQL (más de 131 072 dígitos enteros o más de 16 383 decimales, ceros finales incluidos) en cualquier punto del cuerpo. <!-- owner, 2026-11-11 -->
 
 Ejemplo:
 
@@ -349,6 +357,12 @@ Ejemplo:
 ```
 
 (El dominio en `type` es ilustrativo; no necesita resolver.)
+
+En `422`, `detail` sigue siendo un texto y la extensión `errors` dice dónde falló la validación y de qué tipo, sin repetir lo recibido: nunca lleva `msg`, `input` ni `ctx`, y `loc` se corta en `body.record.raw`, porque las claves de `record.raw` son cabeceras del archivo. Ningún otro error lleva `errors`. <!-- owner, 2026-11-03 -->
+
+```json
+{ "errors": [ { "loc": ["body", "violations", 0, "errorCode"], "type": "enum" } ] }
+```
 
 ---
 

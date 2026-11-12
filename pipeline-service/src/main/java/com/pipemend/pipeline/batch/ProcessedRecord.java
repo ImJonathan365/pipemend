@@ -1,10 +1,12 @@
 package com.pipemend.pipeline.batch;
 
 import com.pipemend.pipeline.transform.SalesTransaction;
+import com.pipemend.pipeline.triage.contract.Severity;
 import com.pipemend.pipeline.validation.Violation;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 
 /** The single outcome of processing one record: it is loaded or it is quarantined, never both (NFR-06). */
 public sealed interface ProcessedRecord {
@@ -13,6 +15,8 @@ public sealed interface ProcessedRecord {
 
     /**
      * @param rawPayload the record as read, keyed by header; {@code {"_rawLine": ...}} for a malformed row
+     * @param analysis only from an answer that passed the validator (docs/05 section 3.3)
+     * @param aiRequestId set on every attempted call to ai-service, also a failed one
      */
     record Quarantined(
             UUID batchId,
@@ -20,8 +24,16 @@ public sealed interface ProcessedRecord {
             Map<String, String> rawPayload,
             List<Violation> violations,
             QuarantineReason reason,
-            String summary)
+            String summary,
+            @Nullable AiAnalysis analysis,
+            @Nullable UUID aiRequestId)
             implements ProcessedRecord {}
+
+    /**
+     * @param body the answer of ai-service as received
+     * @param maxSeverity computed by the validator, never the one received
+     */
+    record AiAnalysis(String body, Severity maxSeverity) {}
 
     /** quarantine_reason values of docs/02 section 5. */
     enum QuarantineReason {

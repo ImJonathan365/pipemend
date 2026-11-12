@@ -44,8 +44,8 @@ class RawRecordReaderTest {
 
         assertThat(records)
                 .containsExactly(
-                        new RawRecord.Malformed(1, "1,2,3,4", "Expected 3 columns, found 4"),
-                        new RawRecord.Malformed(2, "5,6", "Expected 3 columns, found 2"),
+                        new RawRecord.Malformed(1, "1,2,3,4", "Expected 3 columns, found 4", 3, 4),
+                        new RawRecord.Malformed(2, "5,6", "Expected 3 columns, found 2", 3, 2),
                         new RawRecord.Parsed(3, Map.of("a", "7", "b", "8", "c", "9")));
     }
 
@@ -53,7 +53,7 @@ class RawRecordReaderTest {
     void ac_01_5_anEmptyLineIsAMalformedRecord() throws Exception {
         assertThat(readAll("a,b\n1,2\n\n3,4\n"))
                 .element(1)
-                .isEqualTo(new RawRecord.Malformed(2, "", "Expected 2 columns, found 0"));
+                .isEqualTo(new RawRecord.Malformed(2, "", "Expected 2 columns, found 0", 2, 0));
     }
 
     @Test
@@ -118,6 +118,16 @@ class RawRecordReaderTest {
                 .hasMessageContaining("UTF-8");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"a,b\n1,2\n3,x@y\n", "a,b\n1,\"x\ny@z\"\n", "a,b\n1,2,3@\n", "a,b@\n1,2\n"})
+    void ac_01_7_aNulAnywhereIsAnInvalidFileFormat(String csv) {
+        byte[] file = bytes(csv.replace('@', (char) 0));
+
+        assertThatThrownBy(() -> readAll(file))
+                .isInstanceOf(InvalidFileFormatException.class)
+                .hasMessageContaining("U+0000");
+    }
+
     @Test
     void anEmptyFileIsAnInvalidFileFormat() {
         assertThatThrownBy(() -> open(new byte[0]))
@@ -158,9 +168,9 @@ class RawRecordReaderTest {
 
         assertThat(records)
                 .containsExactly(
-                        new RawRecord.Malformed(1, "1,5\" TILE", STRAY_QUOTE),
+                        new RawRecord.Malformed(1, "1,5\" TILE", STRAY_QUOTE, 2, null),
                         new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")),
-                        new RawRecord.Malformed(3, "3,8\" PLATE", STRAY_QUOTE),
+                        new RawRecord.Malformed(3, "3,8\" PLATE", STRAY_QUOTE, 2, null),
                         new RawRecord.Parsed(4, Map.of("a", "4", "b", "z")));
     }
 
@@ -169,7 +179,7 @@ class RawRecordReaderTest {
     void ac_01_5_aQuoteThatDoesNotOpenOrCloseAFieldIsAStrayQuote(String line) throws Exception {
         assertThat(readAll("a,b\n" + line + "\n2,x\n"))
                 .containsExactly(
-                        new RawRecord.Malformed(1, line, STRAY_QUOTE),
+                        new RawRecord.Malformed(1, line, STRAY_QUOTE, 2, null),
                         new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")));
     }
 
@@ -177,7 +187,7 @@ class RawRecordReaderTest {
     void aStrayQuoteNeverOpensAMultilineRecord() throws Exception {
         assertThat(readAll("a,b\n1,5\" TILE,\"open\n2,x\n"))
                 .containsExactly(
-                        new RawRecord.Malformed(1, "1,5\" TILE,\"open", STRAY_QUOTE),
+                        new RawRecord.Malformed(1, "1,5\" TILE,\"open", STRAY_QUOTE, 2, null),
                         new RawRecord.Parsed(2, Map.of("a", "2", "b", "x")));
     }
 

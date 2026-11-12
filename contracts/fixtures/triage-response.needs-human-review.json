@@ -1,0 +1,29 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "recordDecision": "NEEDS_HUMAN_REVIEW",
+  "maxSeverity": "HIGH",
+  "summary": "Falta el precio unitario, que es obligatorio; no se puede deducir de la fila.",
+  "analyses": [
+    {
+      "violationId": "v1",
+      "field": "unit_price",
+      "rootCause": "MISSING_VALUE",
+      "explanation": "El precio unitario está vacío. No es posible deducirlo de forma segura a partir de la fila.",
+      "severity": "HIGH",
+      "classification": "NEEDS_HUMAN_REVIEW",
+      "confidence": 0.99,
+      "correction": null,
+      "suggestedHumanAction": "Consultar el precio unitario del producto en el sistema de origen y reenviar la fila con el valor."
+    }
+  ],
+  "meta": {
+    "provider": "mock",
+    "model": "mock-rules-v1",
+    "promptVersion": "triage_v1",
+    "latencyMs": 3,
+    "cacheHit": false,
+    "inputTokens": null,
+    "outputTokens": null,
+    "llmCalls": 0
+  }
+}

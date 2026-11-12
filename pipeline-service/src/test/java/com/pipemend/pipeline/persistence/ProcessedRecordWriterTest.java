@@ -9,8 +9,11 @@ import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
 import com.pipemend.pipeline.batch.RawRecord;
 import com.pipemend.pipeline.batch.RecordTestSupport;
 import com.pipemend.pipeline.schema.SchemaDefinition;
-import com.pipemend.pipeline.triage.DisabledAiTriagePort;
+import com.pipemend.pipeline.triage.TriageOutcome;
+import com.pipemend.pipeline.triage.contract.Severity;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -52,6 +55,7 @@ class ProcessedRecordWriterTest {
 
     private ProcessedRecordWriter writer;
     private UUID batchId;
+    private UUID lastRequestId;
 
     @BeforeEach
     void setUp() {
@@ -101,7 +105,7 @@ class ProcessedRecordWriterTest {
                 .containsEntry("ai_analysis", null)
                 .containsEntry("max_severity", null)
                 .containsEntry("policy_decision", null)
-                .containsEntry("ai_request_id", null);
+                .containsEntry("ai_request_id", lastRequestId);
         assertThat(json.readValue((String) row.get("raw"), new TypeReference<Map<String, String>>() {}))
                 .isEqualTo(raw);
         List<Map<String, Object>> violations =
@@ -129,16 +133,74 @@ class ProcessedRecordWriterTest {
 
     @Test
     void ac_11_2_aMalformedRowKeepsItsRawLineAndATechnicalSummary() throws Exception {
-        write(process(schema, new RawRecord.Malformed(3, "1,2,3", "Expected 8 columns, found 3")));
+        write(process(schema, new RawRecord.Malformed(3, "1,2,3", "Expected 8 columns, found 3", 8, 3)));
 
-        Map<String, Object> row = jdbc.sql(
-                        "SELECT raw_payload::text AS raw, summary FROM quarantine_record WHERE batch_id = :id")
-                .param("id", batchId)
-                .query()
-                .singleRow();
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT raw_payload::text AS raw, summary, violations->0->'expected' #>> '{}' AS expected
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
         assertThat(json.readValue((String) row.get("raw"), new TypeReference<Map<String, String>>() {}))
                 .isEqualTo(Map.of("_rawLine", "1,2,3"));
         assertThat((String) row.get("summary")).contains("_record MALFORMED_ROW (Expected 8 columns, found 3)");
+        assertThat(json.readValue((String) row.get("expected"), new TypeReference<Map<String, Object>>() {}))
+                .isEqualTo(Map.of("expectedColumns", 8, "receivedColumns", 3));
+    }
+
+    @Test
+    void ac_07_4_aStrayQuoteKeepsItsNullsInTheStoredViolation() throws Exception {
+        write(process(schema, new RawRecord.Malformed(3, "1,5\" TILE", "A stray quote", 8, null)));
+
+        // In jsonb, so that a JSON null is told apart from a key that was never written.
+        assertThat(jdbc.sql("SELECT jsonb_object_keys(violations->0) FROM quarantine_record WHERE batch_id = :id")
+                        .param("id", batchId)
+                        .query(String.class)
+                        .list())
+                .containsExactlyInAnyOrder(
+                        "violationId",
+                        "field",
+                        "sourceHeader",
+                        "errorCode",
+                        "receivedValue",
+                        "expected",
+                        "technicalMessage",
+                        "exceptionType");
+        Map<String, Object> types = jdbc.sql("""
+                        SELECT jsonb_typeof(violations->0->'sourceHeader') AS source_header,
+                            jsonb_typeof(violations->0->'receivedValue') AS received_value,
+                            jsonb_typeof(violations->0->'exceptionType') AS exception_type,
+                            jsonb_typeof(violations->0->'expected'->'expectedColumns') AS expected_columns,
+                            jsonb_typeof(violations->0->'expected'->'receivedColumns') AS received_columns
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(types)
+                .containsEntry("source_header", "null")
+                .containsEntry("received_value", "null")
+                .containsEntry("exception_type", "null")
+                .containsEntry("expected_columns", "number")
+                .containsEntry("received_columns", "null");
+    }
+
+    @Test
+    void ac_07_4_aLongRawLineStaysWholeInQuarantine() throws Exception {
+        String line = "x".repeat(5000);
+
+        write(process(schema, new RawRecord.Malformed(3, line, "A stray quote", 8, null)));
+
+        String raw = jdbc.sql("SELECT raw_payload::text FROM quarantine_record WHERE batch_id = :id")
+                .param("id", batchId)
+                .query(String.class)
+                .single();
+        assertThat(json.readValue(raw, new TypeReference<Map<String, String>>() {}))
+                .isEqualTo(Map.of("_rawLine", line));
+    }
+
+    @Test
+    void ac_07_1_theSourceOfTheRequestComesFromTheBatch() {
+        IngestionBatchRepository.BatchSource source =
+                new IngestionBatchRepository(jdbc, RecordTestSupport.CLOCK).source(batchId);
+
+        assertThat(source.type()).isEqualTo("CSV");
+        assertThat(source.filename()).isNotBlank();
     }
 
     @Test
@@ -149,7 +211,7 @@ class ProcessedRecordWriterTest {
         write(
                 process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow())),
                 process(schema, new RawRecord.Parsed(2, invalid)),
-                process(schema, new RawRecord.Malformed(3, "x", "Expected 8 columns, found 1")));
+                process(schema, new RawRecord.Malformed(3, "x", "Expected 8 columns, found 1", 8, 1)));
 
         assertThat(rowNumbers("sales_transaction")).containsExactly(1);
         assertThat(rowNumbers("quarantine_record")).containsExactly(2, 3);
@@ -171,11 +233,45 @@ class ProcessedRecordWriterTest {
     }
 
     @Test
+    void ac_11_1_anAnalysedRecordKeepsTheAnalysisItsSeverityAndItsRequestId() throws Exception {
+        String body =
+                Files.readString(Path.of("..", "contracts", "fixtures", "triage-response.needs-human-review.json"));
+        UUID requestId = UUID.randomUUID();
+        write(new ProcessedRecord.Quarantined(
+                batchId,
+                3,
+                Map.of("Country", "Atlantis"),
+                List.of(),
+                QuarantineReason.AI_REVIEW_REQUIRED,
+                "summary of the AI",
+                new ProcessedRecord.AiAnalysis(body, Severity.HIGH),
+                requestId));
+
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT ai_analysis::text AS ai_analysis, max_severity, ai_request_id, policy_decision, summary
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(row)
+                .containsEntry("max_severity", "HIGH")
+                .containsEntry("ai_request_id", requestId)
+                .containsEntry("policy_decision", null)
+                .containsEntry("summary", "summary of the AI");
+        assertThat(json.readTree((String) row.get("ai_analysis"))).isEqualTo(json.readTree(body));
+    }
+
+    @Test
     void aDatabaseErrorInAWriterFailsTheWholeChunkInsteadOfQuarantining() {
         ProcessedRecord valid = process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow()));
         // Its batch does not exist, so the foreign key fails after the clean row of the same chunk was written.
         ProcessedRecord orphan = new ProcessedRecord.Quarantined(
-                UUID.randomUUID(), 2, Map.of("_rawLine", "x"), List.of(), QuarantineReason.AI_UNAVAILABLE, "x");
+                UUID.randomUUID(),
+                2,
+                Map.of("_rawLine", "x"),
+                List.of(),
+                QuarantineReason.AI_UNAVAILABLE,
+                "x",
+                null,
+                null);
 
         assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> {
                     try {
@@ -190,7 +286,10 @@ class ProcessedRecordWriterTest {
     }
 
     private ProcessedRecord process(SchemaDefinition schema, RawRecord record) {
-        return RecordTestSupport.processor(batchId, schema, new DisabledAiTriagePort())
+        return RecordTestSupport.processor(batchId, schema, request -> {
+                    lastRequestId = request.requestId();
+                    return new TriageOutcome.Unavailable("ai-service is unreachable");
+                })
                 .process(record);
     }
 

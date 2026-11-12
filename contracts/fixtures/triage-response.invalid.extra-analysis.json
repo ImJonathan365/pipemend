@@ -1,0 +1,90 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "recordDecision": "AUTO_FIXABLE",
+  "maxSeverity": "LOW",
+  "summary": "La fila tiene tres problemas de formato sin pérdida de información: fecha en formato día/mes/año, precio con símbolo de libra y coma decimal, y país abreviado.",
+  "analyses": [
+    {
+      "violationId": "v1",
+      "field": "invoice_date",
+      "rootCause": "FORMAT_MISMATCH",
+      "explanation": "La fecha viene en formato día/mes/año (25/12/2010). Como el día es 25, no hay ambigüedad con el mes.",
+      "severity": "LOW",
+      "classification": "AUTO_FIXABLE",
+      "confidence": 0.97,
+      "correction": {
+        "operation": "PARSE_DATE",
+        "originalValue": "25/12/2010 08:26",
+        "proposedValue": "2010-12-25 08:26:00",
+        "parameters": {
+          "sourcePattern": "dd/MM/yyyy HH:mm"
+        }
+      },
+      "suggestedHumanAction": null
+    },
+    {
+      "violationId": "v2",
+      "field": "unit_price",
+      "rootCause": "LOCALE_FORMAT",
+      "explanation": "El precio incluye el símbolo £ y usa coma como separador decimal (formato europeo).",
+      "severity": "LOW",
+      "classification": "AUTO_FIXABLE",
+      "confidence": 0.95,
+      "correction": {
+        "operation": "PARSE_NUMBER",
+        "originalValue": "£1,25",
+        "proposedValue": "1.25",
+        "parameters": {
+          "decimalSeparator": ",",
+          "groupingSeparator": null,
+          "strippedSymbols": [
+            "£"
+          ]
+        }
+      },
+      "suggestedHumanAction": null
+    },
+    {
+      "violationId": "v3",
+      "field": "country",
+      "rootCause": "SYNONYM",
+      "explanation": "'UK' es la abreviatura habitual de Reino Unido; el catálogo usa 'United Kingdom'.",
+      "severity": "LOW",
+      "classification": "AUTO_FIXABLE",
+      "confidence": 0.96,
+      "correction": {
+        "operation": "MAP_TO_ENUM",
+        "originalValue": "UK",
+        "proposedValue": "United Kingdom",
+        "parameters": {}
+      },
+      "suggestedHumanAction": null
+    },
+    {
+      "violationId": "v4",
+      "field": "country",
+      "rootCause": "SYNONYM",
+      "explanation": "'UK' es la abreviatura habitual de Reino Unido; el catálogo usa 'United Kingdom'.",
+      "severity": "LOW",
+      "classification": "AUTO_FIXABLE",
+      "confidence": 0.96,
+      "correction": {
+        "operation": "MAP_TO_ENUM",
+        "originalValue": "UK",
+        "proposedValue": "United Kingdom",
+        "parameters": {}
+      },
+      "suggestedHumanAction": null
+    }
+  ],
+  "meta": {
+    "provider": "mock",
+    "model": "mock-rules-v1",
+    "promptVersion": "triage_v1",
+    "latencyMs": 3,
+    "cacheHit": false,
+    "inputTokens": null,
+    "outputTokens": null,
+    "llmCalls": 0
+  }
+}

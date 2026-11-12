@@ -782,3 +782,520 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - Cuando llegue FR-08, `complete` debe guardar también `ai_calls_count`. Hoy no lo guarda, y un
     lote `COMPLETED` mostraría `aiCalls = 0`.
   - Cerrado: el `code` en los 404 y 405 de Spring (pendiente de la entrada de ingestas duplicadas).
+
+## Sprint 3 — Contrato de triage (2026-10-24)
+- Hecho: FR-08, la parte del contrato (`06` A.1). Todavía no hay ruta `/v1/triage`.
+  - `ai-service/app/domain/contracts.py` contiene `TriageRequest` y `TriageResponse`, con sus enums.
+    - La request rechaza los campos desconocidos (`extra="forbid"`, `422`). La respuesta los
+      ignora, así que añadir un campo opcional sigue siendo compatible (`09` §7.5).
+    - Los validadores de la respuesta solo cubren lo que no necesita la request: `correction` ⇔
+      `AUTO_FIXABLE`, `suggestedHumanAction` en `NEEDS_HUMAN_REVIEW`, `recordDecision` y
+      `maxSeverity` coherentes y ningún `violationId` repetido. El resto de AC-08.7 queda para
+      `TriageResponseValidator`, en el pipeline.
+  - `contracts/ai-service.openapi.json` se genera con `uv run python -m app.contract_export` (desde
+    `ai-service`). Un test lo compara byte a byte con el archivo versionado, así que una
+    desincronización hace fallar el paso "Test" del CI sin tocar `ci.yml`.
+  - `contracts/fixtures/` contiene 24 fixtures escritas a mano a partir del contrato, sin usar
+    `data/` ni `labels.csv`. Cada inválida rompe una sola regla. `index.json` dice, para cada una,
+    qué request la acompaña, el resultado esperado y si Pydantic la acepta, para que la usen pytest
+    y, más adelante, los tests Java.
+- Decisión del owner (2026-10-24): "Apruebo crear ai-service/app/domain/contracts.py con los modelos
+  de TriageRequest y TriageResponse de docs/06 A.1, generar contracts/ai-service.openapi.json con
+  app.contract_export, escribir a mano las fixtures de contracts/fixtures/, modificar docs/06 para
+  añadir a expected las claves expectedColumns y receivedColumns (D63), las filas violationId y
+  field a la tabla de la respuesta y la regla de que la request rechaza campos desconocidos con
+  422, y alinear docs/02 AC-08.7 con el orden de 06."
+  - Respuestas a las preguntas del plan: export con `app.openapi()` más los modelos añadidos;
+    orden de las `analyses` opción A (el pipeline también rechaza un orden distinto);
+    `violationId` y `field` obligatorios; `extra="forbid"` en la request, escrito en `06` junto a
+    las otras dos fronteras; `expectedColumns` y `receivedColumns`.
+- Decisiones:
+  - D96: cierra D63. `expected` de `MALFORMED_ROW` lleva `expectedColumns` y `receivedColumns`.
+    `receivedColumns` es `null` si la línea no se pudo separar en columnas (comilla suelta). El
+    pipeline empieza a emitirlas en su rama de FR-07. | Reversible: sí (claves opcionales).
+  - D97: los esquemas añadidos se generan como los generará FastAPI 0.141.1 cuando exista la ruta.
+    Lo verifiqué en el código fuente de FastAPI:
+    - `fastapi/_compat/v2.py`, `get_definitions` (l.285-336): la request en modo `validation` y la
+      respuesta en modo `serialization`, porque `separate_input_output_schemas=True` conserva el
+      modo de cada campo (l.329);
+    - `REF_TEMPLATE = "#/components/schemas/{model}"` (`fastapi/openapi/constants.py:3`);
+    - las descripciones se recortan en el primer `\f` (l.337-340).
+
+    Los nombres los pone Pydantic, que solo añade `-Input` o `-Output` cuando un modelo se usa en
+    los dos modos. Ningún modelo del contrato está en los dos lados, y el export falla si aparece
+    un sufijo. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `ai-service/app/domain/contracts.py`
+  (nuevo), `contracts/**` (nuevo), `docs/06-contrato-api.md` (las tres fronteras, A.1) y
+  `docs/02-requisitos-funcionales.md` AC-08.7 (el orden).
+- Pendiente:
+  - Rama de la ruta `POST /v1/triage`: un test que confirme que `build_spec()` es igual a
+    `app.openapi()` sin el añadido. Cuando ese test pase, el añadido se puede quitar.
+  - Rama del pipeline (FR-07 y AC-08.7): emitir `expectedColumns` y `receivedColumns`, y usar las
+    fixtures de `contracts/fixtures/` en `TriageResponseValidator`.
+
+## Sprint 3 — Proveedor LLM y mock (2026-11-01)
+- Hecho: FR-17 (AC-17.1, AC-17.2) y la frontera LLM → `ai-service` de `06`. Sigue sin haber ruta
+  `/v1/triage`, `triage_service`, `rules.py` ni caché.
+  - `ai-service/app/providers/`: protocolo `LLMProvider` asíncrono, `create_provider` y `MockProvider`,
+    que cubre los 20 `defect_type` de `10` §3 sin conocerlos: mira `errorCode`, `field`,
+    `receivedValue` y `expected`, y nunca `record.raw`.
+  - `ai-service/app/domain/llm_output.py`: salida del LLM con `extra="forbid"`.
+  - `ai-service/app/domain/triage_prompt.py`: bloque `<triage_context>` con la solicitud como dato.
+- Decisión del owner (2026-11-01): "Apruebo crear ai-service/app/domain/llm_output.py con la salida
+  del LLM de la decisión 4 aunque esa frontera sea de FR-08 y el PR sea de FR-17, modificar docs/04
+  (árbol de §6, async en §9 y timeout con asyncio.timeout en el paso 5 de §6), modificar docs/02
+  AC-17.2 para que el mock pueda llevar una tabla fija de alias y tokens nulos en mock.py, añadir la
+  entrada al CHANGELOG, copiar en mock.py los alias y los tokens nulos con un test contra los YAML,
+  añadir pyyaml==6.0.3 al grupo dev de ai-service/pyproject.toml y actualizar uv.lock, y superar las
+  400 líneas en esta rama (hasta ~600)."
+- Decisiones:
+  - D98: el mock lleva una copia fija de los alias y de los tokens nulos, única excepción al "solo a
+    partir de la solicitud" de AC-17.2. No lee archivos en ejecución; un test la compara con los
+    YAML de `pipeline-service/src/main/resources/schemas/`. `pyyaml` queda declarado en el grupo
+    dev. | Alternativas: solo los pares de ejemplo, que no bastan porque el generador elige
+    cualquier alias; leer el YAML, que no está en la imagen de `ai-service`. | Reversible: sí.
+  - D99: la solicitud llega al mock dentro del `user_prompt`, porque cambiar la firma de `04` §9
+    exige ADR. El JSON del bloque escribe cada `<` como `\u003c`, así que ningún dato puede contener
+    el marcador de cierre, tampoco para un LLM real. Sin bloque, el mock lanza una excepción y nunca
+    responde con un análisis vacío. `render_context` deja resuelto el idioma, y el mock no consulta
+    `Settings`. | Reversible: sí.
+  - D100: el timeout es del que llama, con `asyncio.timeout`, y `temperature` es del constructor de
+    cada proveedor real. La firma de `04` §9 solo gana `async` (NFR-10, `09` §7.6). | Reversible: sí.
+  - D101: la salida del LLM solo tiene `summary` y `analyses`. `recordDecision`, `maxSeverity`,
+    `requestId` y `meta` los pone el servicio. No lleva `max_length` (`06` regla 5) ni la comprobación
+    `correction` ⇔ `AUTO_FIXABLE` (`06` regla 3). Solo acepta camelCase, y `confidence` es estricto:
+    `"0.97"` y `true` son salida inválida. | Reversible: sí.
+  - D102: la factory solo tiene la rama de `mock`; cualquier otro valor lanza `ValueError` con su
+    nombre. No se invoca al arrancar, así que AC-17.3 no cambia. | Reversible: sí.
+  - D103: lo que queda fuera del catálogo (`quantity = "6.0"`, `$2.55`, `2,550`, `2.555`,
+    `12/25/2010`) va a humano en `MEDIUM`, por encima del piso de esos códigos. `DATE_AMBIGUOUS`
+    también: el mock no propone para que luego rechace el verificador. `MAX_LENGTH_EXCEEDED` va a
+    humano en `HIGH`, y un test recorre todos los `ErrorCode`, con valores dentro y fuera del
+    catálogo, contra los pisos de `06` A.1. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/llm_output.py` (nuevo), `docs/04-arquitectura.md` (§6 y §9),
+  `docs/02-requisitos-funcionales.md` AC-17.2.
+- Pendiente:
+  - Rama de `triage_service`:
+    - comprobar que las `analyses` son exactamente las violaciones enviadas, en el mismo orden;
+    - anular `correction` en `NEEDS_HUMAN_REVIEW`: `06` regla 1 solo cubre los códigos no
+      corregibles, y `TriageResponse` rechazaría el resto;
+    - fijar `llmCalls` con el mock: el ejemplo de `06` dice 0;
+    - decidir qué hacer hasta que exista `prompts/triage_v1.md`, que es del Sprint 5, aunque `04` §6
+      paso 4 lo use.
+  - Sprint 5: hasta entonces, un `LLM_PROVIDER` real termina en `ValueError` al crear el proveedor.
+  - Sprint 4 (AC-10.6): la fixture de `contracts/fixtures/` con una instrucción inyectada que pide
+    NFR-14. Por ahora, el test del mock lleva la instrucción en línea.
+
+## Sprint 3 — `triage_service`, reglas duras y caché (2026-11-01)
+- Hecho: el flujo de `04` §6.2 hasta donde `07` lo lleva en el Sprint 3, con AC-08.3 y AC-08.4 completos
+  y AC-08.1, AC-08.2 y AC-08.8 probados contra el servicio. Sin HTTP: el servicio lanza excepciones
+  propias y sigue sin haber ruta `/v1/triage`.
+  - `ai-service/app/domain/rules.py`: reglas 1, 2, 3, 5 y 6 de `06` A.1 y descarte de caché de AC-08.4 c.
+    La regla 4 ya la cumple `LlmCorrection`.
+  - `ai-service/app/services/cache.py`: clave de NFR-11 y LRU con TTL.
+  - `ai-service/app/services/triage_service.py`: caché, llamada, validación, reglas y `meta`.
+  - Cierra los cuatro pendientes de esta rama en la entrada anterior.
+- Decisión del owner (2026-11-01): "Apruebo crear ai-service/app/domain/rules.py, modificar
+  ai-service/app/domain/contracts.py para añadir las constantes de longitud, modificar docs/04 §6.2
+  (nota del paso 4 sobre el prompt de sistema vacío hasta el Sprint 5, alcance de los pasos 1, 3, 5 y 6
+  según docs/07, y recorte del paso 7 solo para textos con máximo), y añadir la entrada al CHANGELOG,
+  en esta rama y hasta ~450 líneas sin tests."
+- Decisión del owner (2026-11-01): "Apruebo modificar docs/09 §7.4 para que remita a la excepción de la
+  tabla fija de AC-17.2, y corregir en docs/CHANGELOG.md la línea de D99 para que diga \u003c."
+- Decisiones:
+  - D104: sin `prompts/triage_v1.md`, el prompt de sistema va vacío. Solo es aceptable porque
+    `create_provider` únicamente construye el mock, que lo ignora: un proveedor real no puede llegar a
+    ese código. | Alternativa: un borrador con ese nombre, que quedaría 🔴 al llegar a `main` y
+    adelantaría el Sprint 5. | Reversible: sí.
+  - D105: se sigue a `07` donde `04` §6.2 describe más: plazo total, tope diario, `asyncio.timeout` y
+    reparación son del Sprint 5. Con el mock nada de eso puede ocurrir. Las excepciones del proveedor
+    se propagan hasta el "mapeo de errores del SDK" del Sprint 5. | Reversible: sí.
+  - D106: `suggestedHumanAction` no se recorta: `06` y el contrato no le fijan máximo, y añadirlo
+    cambiaría el contrato. Lo acota `LLM_MAX_OUTPUT_TOKENS`. | Reversible: sí.
+  - D107: `meta.llmCalls` es 0 con el mock, también si no hay acierto de caché: `06` cuenta "llamadas
+    reales al LLM" y su ejemplo con mock dice 0. AC-08.6 cuenta por `cacheHit`, así que el presupuesto
+    no cambia. | Reversible: sí.
+  - D108: AC-08.4 c usa contención literal sin distinguir mayúsculas, sobre valores no vacíos. Un
+    valor corto como `"1"` descarta un texto con `2010`, y eso solo cuesta una llamada; limitar por
+    palabra podría dejar pasar un valor. Sin `sourceHeader`, la columna propia cuenta como ajena.
+    | Reversible: sí.
+  - D109: `analyses` distintas de las violaciones (conjunto, orden o `field`) son salida inválida y no
+    se guardan: ninguna regla lo arregla. Una `correction` con `originalValue` distinto de
+    `receivedValue`, o con `proposedValue` nulo fuera de `NULLIFY_TOKEN`, no es "válida" (`06` regla 3)
+    y va a humano. Cualquier `NEEDS_HUMAN_REVIEW` pierde su `correction`, y si no trae acción recibe un
+    texto fijo es/en, porque `Analysis` la exige. | Reversible: sí.
+  - D110: `explanation` y `summary` se recortan contando caracteres, sin puntos suspensivos y antes de
+    guardar en caché. La plantilla de `summary` de un acierto usa las mismas frases que el mock, de
+    modo que con mock solo `meta` distingue un acierto de un fallo (NFR-13). | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/rules.py` (nuevo), `ai-service/app/domain/contracts.py` (constantes, sin cambio
+  en la spec), `docs/04-arquitectura.md` (§6.2), `docs/09-reglas-para-agentes-ia.md` (§7.4).
+- Pendiente:
+  - Rama `feat/FR-08-triage-route`: la ruta `POST /v1/triage`, `errors.py`, `ProblemDetail`, `main.py`,
+    `cache.entries` en `system.py`, el cambio en `contract_export.py` y la spec; el test de que el
+    export es igual a `app.openapi()` puro; las respuestas HTTP de AC-08.8, AC-08.1 y AC-08.2;
+    `LlmInvalidOutputError` → `502 LLM_INVALID_OUTPUT`; `503` para un proveedor real;
+    `400 INVALID_REQUEST` si `requestId` difiere de `X-Request-Id`. El owner aceptó las decisiones de
+    esa rama con dos correcciones: la spec declara todos los códigos de `06` A.5, también 429 y 504, y
+    la fila 500 lleva todas sus columnas, alineada con NFR-07.
+  - Sprint 4: riesgo de NFR-13. La caché de `ai-service` sobrevive a una base limpia si no se reinicia
+    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Sin
+    resolver.
+  - Sprint 5: cumplir `09` §7.11 con `triage_v1.md` antes de añadir un proveedor real; contar
+    `llmCalls` reales; plazo total, `asyncio.timeout`, tope diario, reparación y mapeo de errores.
+
+## Sprint 3 — Ruta `POST /v1/triage` y errores (2026-11-03)
+- Hecho: FR-08 por HTTP (AC-08.1, AC-08.2, AC-08.8 y un segundo envío idéntico con `cacheHit = true`),
+  AC-17.3 y NFR-20 en `ai-service`, con los códigos de `06` A.5 declarados en la spec.
+  - `ai-service/app/api/triage.py`: ruta `async def`.
+  - `ai-service/app/api/errors.py`: `problem+json`, también para 404 y 405.
+  - `contract_export.py` ya no añade nada: la spec es `app.openapi()`.
+  - `cache.entries` de `GET /v1/info` es real.
+- Decisión del owner (2026-11-03): "Apruebo modificar ai-service/app/domain/contracts.py para añadir
+  ProblemDetail, regenerar contracts/ai-service.openapi.json con la ruta POST /v1/triage y los códigos
+  de 06 A.5 como esquema inline, aceptando que los esquemas existentes pierdan únicamente sus default
+  null al pasar a app.openapi() puro; modificar docs/06 A.5 para añadir la fila 500 INTERNAL_ERROR,
+  alinear la fila de transporte a 502/503/504 sin problem+json y aclarar en las cabeceras que un
+  X-Request-Id ausente se genera y uno que no es UUID da 422; modificar docs/03 NFR-07 para añadir 500
+  a la lista de fallas del circuit breaker, sin cambiar sus reintentos; modificar el árbol de docs/04
+  §6.2 para añadir errors.py; capturar Exception en el middleware para responder 500 INTERNAL_ERROR;
+  responder 404 y 405 en problem+json con NOT_FOUND y METHOD_NOT_ALLOWED en ai-service, documentándolo
+  en 06 A.5; cambiar en test_provider_factory.py el ValueError por la excepción propia; y añadir la
+  entrada al CHANGELOG."
+- Corrección: **D97 estaba equivocada.** Decía que los esquemas añadidos se generaban como los generaría
+  FastAPI 0.141.1 cuando existiera la ruta, y lo apoyaba en `get_definitions`. Faltó el último paso de
+  `get_openapi` (`fastapi/openapi/utils.py:679`), con `exclude_none=True`, que quita todo `default: null`.
+  Con la ruta puesta y el añadido todavía en el código, el test de igualdad falló:
+  `ValueError: schema Expected already exists with another definition`. La entrada de D97 no se reescribe.
+- Decisiones:
+  - D111: la spec pasa a ser `app.openapi()` puro y sus esquemas pierden 16 `default: null` (12 en
+    `Expected`, 2 en `Violation`, 1 en `TriageOptions`, 1 en `TriageRequest`). `required`, tipos y enums
+    no cambian. Comprobado una vez contra `dev`: sin esos `default`, los 23 esquemas y las rutas
+    existentes son idénticos. | Reversible: sí.
+  - D112: un `X-Request-Id` que no es UUID da `422 VALIDATION_ERROR`, por el tipo de la cabecera; si
+    falta, no hay error. `requestId` del error repite lo recibido, así que en `ProblemDetail` es texto.
+    | Reversible: sí.
+  - D113: `ProblemDetail` va inline en cada código y se genera desde el modelo, con sus `$defs` resueltos.
+    `model` en `responses` declararía también `application/json`, que es falso. | Reversible: sí.
+  - D114: el 500 se responde desde el middleware y no desde un handler de `Exception`, que Starlette
+    ejecuta fuera del middleware, sin `X-Request-Id`, y relanza. El log `ERROR` lleva tipo y líneas del
+    traceback, sin el mensaje, que podría citar la fila (NFR-08). | Reversible: sí.
+  - D115: `detail` siempre es texto. El 422 añade `errors: [{loc, type}]`, sin `msg`, `input` ni `ctx`, y
+    con `loc` cortado en `body.record.raw`. | Reversible: sí.
+  - D116: `ProviderNotConfiguredError` reemplaza al `ValueError` de D102, porque `read_context` también
+    lanza `ValueError` y un fallo interno sería un 503. Da 503 sin key (AC-17.3) y con un proveedor
+    real aún sin implementar. | Reversible: sí.
+  - D117: una caché por `create_app()`, en `app.state`, creada al arrancar. Su tamaño sale de
+    `get_settings()` aunque un test sustituya esa dependencia. | Reversible: sí.
+  - D118: 404 y 405 usan como `code` el nombre del estado, igual que `06` Parte B, y el 405 conserva
+    `Allow`. En A.5 sus columnas dicen "igual que 400": no reintenta, no cuenta para el circuit breaker
+    y `AI_INVALID_RESPONSE`. NFR-07 no los nombra. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `ai-service/app/domain/contracts.py`, `contracts/ai-service.openapi.json`,
+  `docs/06-contrato-api.md` (cabeceras y A.5), `docs/03-requisitos-no-funcionales.md` (NFR-07),
+  `docs/04-arquitectura.md` (§6.2).
+- Test existente modificado (con aprobación explícita del owner): `test_provider_factory.py` espera
+  `ProviderNotConfiguredError` en lugar de `ValueError`, con el mismo `match`.
+- Pendiente:
+  - Sprint 4: el pipeline trata 500 como `AI_UNAVAILABLE`, sin reintento y contando para el circuit
+    breaker (`06` A.5). Esta rama no lleva código de reintentos.
+  - Sprint 5: hasta entonces, un `LLM_PROVIDER` real con key da `/health` `ok`, pero `/v1/triage`
+    responde 503. La spec ya declara 429 y 504, que hasta entonces no se emiten.
+
+## Sprint 3 — Contexto de FR-07 y petición de triage en el pipeline (2026-11-04)
+- Hecho: FR-07 (AC-07.2, AC-07.3; AC-07.1 y AC-07.4 parciales, ver D121) y el DTO de la petición de `06` A.1.
+  Sigue sin haber cliente HTTP: `DisabledAiTriagePort` recibe la petición y responde "no disponible".
+  - `triage/contract/TriageRequest.java` y `triage/TriageRequestBuilder.java`.
+  - `RawRecord.Malformed` lleva `expectedColumns` y `receivedColumns`, y el pipeline los emite en
+    `expected` y en `quarantine_record.violations` (D96).
+  - `validation/Text.truncate` recorta por code points; también lo usa `technicalMessage`.
+- Decisión del owner (2026-11-04): "Apruebo crear el DTO TriageRequest en
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/, que expected siga siendo un Map
+  en la petición, que AiTriagePort reciba TriageRequest, aplazar al Sprint 5 AI_REDACT_FIELDS y
+  AI_SEND_FULL_RECORD dejando AC-07.1 parcial, añadir la entrada al CHANGELOG, y cambiar
+  RawRecordReaderTest, RecordProcessorTest y ProcessedRecordWriterTest por las columnas de D96."
+- Decisión del owner (2026-11-04): "Apruebo modificar docs/03 NFR-07 para añadir 404 y 405 a lo que no
+  cuenta para el circuit breaker, en la primera rama del pipeline."
+- Decisión del owner (2026-11-04): "Apruebo corregir en docs/CHANGELOG.md la entrada de FR-07 para dejar
+  AC-07.4 como parcial, y añadir a la condición previa del Sprint 5 el envío sin _rawLine con
+  AI_SEND_FULL_RECORD=false y la limitación en el README."
+- Decisiones:
+  - D119: `AiTriagePort` recibe `TriageRequest`, como `04` §4 (`triage(context)`). El builder ya corre
+    con cada registro inválido, y un fallo suyo termina en `PROCESSING_ERROR`. | Reversible: sí.
+  - D120: `expected` sigue siendo un `Map` en la petición, porque una clave ausente y un valor nulo
+    difieren en `receivedColumns`. Es la excepción a "DTO como `record`" de `04` §6.1. Un test compara
+    cada tipo de regla del YAML real con el esquema `Expected` de `contracts/ai-service.openapi.json`, sin
+    dependencias nuevas. | Reversible: sí.
+  - D121: `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD` se aplazan al Sprint 5 (`07`), y AC-07.1 y AC-07.4
+    quedan parciales: AC-07.4 también depende de `AI_SEND_FULL_RECORD`. `customer_id` llega sin redactar
+    a `ai-service`, que es local y cuyo mock no lee `record.raw`. | Reversible: sí.
+  - D122: el límite de 1 000 de `technicalMessage` y el de 2 000 de `_rawLine` cuentan code points, como
+    `ai-service`, y nunca parten un emoji. `_rawLine` solo se recorta en la petición; `raw_payload`
+    queda íntegro. | Reversible: sí.
+  - D123: el pipeline no envía `explanationLanguage` (`options` es `null`), y `ai-service` usa
+    `AI_EXPLANATION_LANGUAGE`. `QuarantineWriter` reutiliza los ids de la petición, de modo que `v1` es
+    la misma violación en ambos lados. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  `pipeline-service/.../triage/contract/TriageRequest.java` (nuevo), `docs/03-requisitos-no-funcionales.md`
+  (NFR-07), `docs/CHANGELOG.md`.
+- Tests existentes modificados (con aprobación explícita del owner): `RawRecordReaderTest`,
+  `RecordProcessorTest` y `ProcessedRecordWriterTest`, por las columnas de D96. También cambia
+  `RecordTestSupport`, el helper que construye el procesador.
+- Pendiente:
+  - Rama `feat/FR-08-response-validator`: `TriageResponse`, sus enums, `TriageJson`,
+    `TriageResponseValidator` y las 18 fixtures de respuesta. Aceptadas de forma provisional: el mapper
+    estricto, que además debe fallar con contenido tras el JSON, y las comprobaciones más allá de AC-08.7.
+  - Rama `feat/FR-08-triage-client`: `AI_REVIEW_REQUIRED` para un `AUTO_FIXABLE`, provisional hasta el
+    Sprint 4, y `ai_analysis` con el cuerpo recibido. Su plan revisa el riesgo de 30 s por fila y WireMock.
+  - **Condición previa del Sprint 5, junto a `09` §7.11:** ningún proveedor real antes de aplicar
+    `AI_REDACT_FIELDS` y `AI_SEND_FULL_RECORD`, incluido el envío sin `_rawLine` con
+    `AI_SEND_FULL_RECORD=false`, y de documentar esa limitación en el README (AC-07.4).
+
+## Sprint 3 — `TriageResponse` y validación de la respuesta (2026-11-05)
+- Hecho: FR-08, AC-08.7 y la parte de formato de AC-12.3 (JSON inválido, enum desconocido, campos faltantes).
+  Nadie llama todavía a este código: lo cablea `feat/FR-08-triage-client`.
+  - `triage/contract/`: `TriageResponse`, `Severity`, `Classification`, `RootCause`, `Operation` y `TriageJson`.
+  - `triage/TriageResponseValidator.java`: clase pura. Las 18 fixtures de respuesta están asignadas: 4
+    válidas, 3 las rechaza `TriageJson` y 11 el validador, cada una por su motivo.
+- Decisión del owner (2026-11-05): "Apruebo crear en
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/ los DTO TriageResponse, sus enums
+  Severity, Classification, RootCause y Operation, y TriageJson como mapper estricto solo para la respuesta
+  de triage, que rechaza contenido tras el JSON y lanza una excepción propia sin el mensaje de Jackson; que
+  TriageResponseValidator aplique AC-08.7 más confidence en [0,1], acción no vacía en NEEDS_HUMAN_REVIEW,
+  proposedValue nulo solo con NULLIFY_TOKEN y los límites de summary, explanation y meta de docs/06; y añadir
+  la entrada al CHANGELOG."
+- Decisión del owner (2026-11-05): "Apruebo cambiar
+  pipeline-service/src/main/java/com/pipemend/pipeline/triage/contract/TriageJson.java para que rechace la cadena
+  vacía o en blanco en campos numéricos y un cuerpo null con InvalidTriageJsonException, y añadir la nota al
+  CHANGELOG."
+- Corregido después de fusionar (hallado por el owner): `"inputTokens": ""` y `"   "`, igual que `outputTokens`,
+  se aceptaban y quedaban como `null`, aunque la spec solo admite entero o `null`; y `TriageJson.parse(null)` lanzaba
+  `IllegalArgumentException`. Ahora ambos lanzan `InvalidTriageJsonException`. El resto de las claves que no son
+  texto ya fallaba con `""` y `"   "`, y lo cubre un test.
+- Decisiones:
+  - D124: `TriageJson` es un mapper estático propio y no un bean. El `JsonMapper` de Boot 4.1.1 (Jackson 3.1.5)
+    acepta `"maxSeverity": 0` como `LOW`, convierte `"confidence": "0.97"` y `"summary": 5`, y con una clave
+    repetida gana la última; el resto de la aplicación lo sigue usando. | Alternativas: configurar el mapper
+    de Boot, que cambiaría a toda la aplicación. | Reversible: sí.
+  - D125: todas las claves son `required = true`, y los constructores rechazan el `null` donde la spec no lo
+    permite. Medido antes de escribir el código: `required` falla con la clave ausente y deja pasar el `null`
+    explícito, también en `correction`, `suggestedHumanAction`, `originalValue`, `proposedValue`, `inputTokens`
+    y `outputTokens`. | Reversible: sí.
+  - D126: `TriageJson` lanza una excepción con mensaje fijo y sin causa, porque el mensaje de Jackson puede citar
+    lo recibido. | Reversible: sí.
+  - D127: el validador devuelve `Valid` con `recordDecision` y `maxSeverity` calculados, o `Invalid` con todas
+    las incidencias, sin valores de la fila. El orden de `Severity` sostiene ese cálculo, y un test lo compara
+    con la spec en orden exacto. | Reversible: sí.
+  - D128: **los límites van más allá de AC-08.7**: `confidence` en [0,1], `summary` ≤ 1000 y `explanation` ≤ 800
+    en code points, `meta` no negativo, `proposedValue` nulo solo con `NULLIFY_TOKEN` y acción no en blanco. Salen
+    de `06` y son fallo cerrado. `ai-service` ya debe recortar esos textos (`06` regla 5), así que un texto largo
+    aquí indica un bug suyo. La acción es más estricta a propósito: `ai-service` solo rechaza la cadena vacía,
+    y aquí `"   "` también falla. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `triage/contract/TriageResponse.java`,
+  `Severity.java`, `Classification.java`, `RootCause.java`, `Operation.java`, `TriageJson.java` (nuevos) y
+  `docs/CHANGELOG.md`.
+- Pendiente:
+  - Rama `feat/FR-08-triage-client`: guardar la respuesta cruda truncada a 4 KB en `ai_call_log.error_detail`
+    (AC-12.3), porque `TriageJson` ya no da el motivo del fallo. Usar `Valid` para `recordDecision` y
+    `max_severity`, nunca lo recibido. Un 200 sin cuerpo termina en `AI_INVALID_RESPONSE`.
+
+## Sprint 3 — Cliente HTTP de triage y `ai_call_log` (2026-11-08)
+- Hecho: FR-08 en el lado del pipeline, sin cablear. `HttpAiTriageClient` llama a `POST /v1/triage` y convierte cada
+  respuesta en un `Reply` siguiendo `06` A.5. Cubre AC-08.5 (una fila de `ai_call_log` por llamada, también si falla,
+  en su propia transacción) y AC-12.3 (cuerpo crudo en `error_detail`). AC-08.6 queda parcial: `outcome` distingue
+  `SUCCESS` de `CACHE_HIT`, pero `ai_calls_count` llega con el cableado. El job sigue usando `DisabledAiTriagePort`
+  hasta `feat/FR-08-quarantine-classifier`.
+- Dependencia de test: `org.wiremock:wiremock-standalone:3.13.2`, la última 3.x en Maven Central; la serie 4 sigue en
+  beta. El cliente usa `RestClient` con `JdkClientHttpRequestFactory`, sin dependencias nuevas de producción. Todos
+  los tests usan 127.0.0.1: WireMock, un puerto cerrado y un listener con la cola de aceptación llena para el
+  timeout de conexión.
+- Decisión del owner (2026-11-08): "Apruebo partir el cliente en feat/FR-08-triage-client (HttpAiTriageClient,
+  AiClientProperties, AiCallLogRepository con REQUIRES_NEW y TriageOutcome, sin cablear) y
+  feat/FR-08-quarantine-classifier; añadir org.wiremock:wiremock-standalone:3.13.2 como dependencia de test en
+  pipeline-service/build.gradle.kts; mapear docs/06 A.5 y las respuestas fuera de la tabla a quarantine_reason y
+  outcome como propone el plan; guardar en error_detail el cuerpo crudo truncado a 4096 bytes UTF-8 y, en
+  transporte, solo el tipo de excepción; que un fallo al escribir ai_call_log no se capture en el cliente y termine
+  en PROCESSING_ERROR según NFR-03; aplazar al Sprint 4 marcar el lote agotado ante 429 LLM_BUDGET_EXHAUSTED y
+  aceptar hasta entonces el riesgo de 30 s por fila; y añadir la entrada al CHANGELOG."
+- Decisión del owner (2026-11-08), sobre la frase anterior: `TriageOutcome` no cambia en esta rama. Es una interfaz
+  sellada que `RecordProcessor` recorre con un `switch` exhaustivo, y añadirle variantes obligaba a tocar el
+  procesador. El cliente devuelve su propio `HttpAiTriageClient.Reply`.
+- Decisiones:
+  - D129: `Reply` tiene cuatro variantes. `Analysed` lleva la respuesta, el cuerpo tal cual y el `Valid` del
+    validador. `Unavailable`, `InvalidResponse` y `BudgetExhausted` llevan un texto técnico sin el cuerpo.
+    | Alternativas: ampliar `TriageOutcome` y tocar `RecordProcessor` aquí | Reversible: sí | Aprobado por: owner.
+  - D130: fuera de la tabla de A.5 decide el estado HTTP, y el `code` solo distingue las filas de 429 y 502:
+    - cualquier estado distinto de 200 que no sea 5xx ni 429 (otros 2xx, 3xx, 4xx sin fila): `AI_INVALID_RESPONSE`
+      y `HTTP_ERROR`;
+    - un 5xx con problem+json y `code` desconocido: `AI_UNAVAILABLE` y `HTTP_ERROR`;
+    - un 5xx sin problem+json: `AI_UNAVAILABLE` y `UNAVAILABLE`.
+
+    Un problem+json necesita `Content-Type: application/problem+json` y un `code` de texto. Los timeouts de conexión
+    y de lectura se registran como `TIMEOUT`. | Reversible: sí | Aprobado por: owner.
+  - D131: `error_detail` guarda el cuerpo crudo truncado a 4 096 bytes UTF-8 sin partir un code point (`05` §3.5).
+    En un fallo de transporte guarda solo el nombre completo de la clase de la excepción; con el cuerpo vacío, `null`.
+    `U+0000` se guarda como `U+FFFD` antes de truncar, porque PostgreSQL lo rechaza en `text`. | Reversible: sí.
+  - D132: ni el cliente ni `AiCallLogRepository` capturan un fallo al escribir el log (NFR-03, `03` l.84); en la
+    rama B, `RecordProcessor` lo convierte en `PROCESSING_ERROR`. | Reversible: sí | Aprobado por: owner.
+  - D133: cada llamada envía `X-Request-Id` igual a `requestId` y también `X-Batch-Id` (`06` A, cabeceras
+    obligatorias). | Reversible: sí.
+  - D134: una respuesta que no pasa `TriageJson` o el validador no guarda nada de `meta`. Un `llmCalls` mayor que
+    32 767 se trata como respuesta inválida, porque no cabe en `ai_call_log.llm_calls` (`smallint`). | Reversible: sí.
+  - D135: el cuerpo de una respuesta no va a los logs a ningún nivel. Un rechazo por estado (400, 404, 405, 422 y
+    los demás no 5xx) se registra en `ERROR` con el `requestId`, el estado y el `code` solo si es uno de A.5. Una
+    respuesta que no pasa el validador va a `WARN` con las incidencias, sin valores. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`. Nueva dependencia de
+  test en `pipeline-service/build.gradle.kts`.
+- Pendiente:
+  - Rama `feat/FR-08-quarantine-classifier`: cablear el cliente y retirar `DisabledAiTriagePort`; columnas de IA de
+    `quarantine_record` y `ai_calls_count`; `AI_REVIEW_REQUIRED` provisional para un `AUTO_FIXABLE`; URL de loopback
+    cerrada en los tests de Spring; comprobación manual con `docker compose`. `ai_analysis` es `jsonb`, que también
+    rechaza `\u0000`: esa rama debe decidir qué hacer con él.
+  - Sprint 4 (`07` l.109): reintentos de transporte (`attempts` > 1), circuit breaker (`CIRCUIT_OPEN`), `AiBudget`
+    y marcar el lote agotado ante `429 LLM_BUDGET_EXHAUSTED` (`06` l.334), y la validación al arrancar del invariante
+    de timeouts de NFR-07 (`03` l.98), que esta rama no implementa.
+  - Riesgo aceptado hasta el Sprint 4: con `ai-service` colgado, cada inválida espera el timeout de lectura completo.
+    En `dirty-1k` son 50 × 30 s ≈ 25 min con la transacción del chunk abierta, frente a ≲ 7 min con el circuit
+    breaker (`03` l.104).
+
+## Sprint 3 — Cableado del cliente y cuarentena con análisis (2026-11-08)
+- Hecho: FR-08 cableado y FR-11 con análisis de IA. `HttpAiTriageClient` es el bean de `AiTriagePort`, y
+  `DisabledAiTriagePort` se retira, sin flag ni perfil. `RecordProcessor` asigna `quarantine_reason` según `02` §5.
+  `quarantine_record` guarda `ai_analysis`, `max_severity` y `ai_request_id`, y `ingestion_batch.ai_calls_count`
+  se guarda al completar (AC-08.6 completo).
+- Comprobación manual con `docker compose` (proyecto `pmprobe`, `--env-file` vacío, `LLM_PROVIDER=mock` por
+  defecto), contra el `ai-service` real:
+  - `dirty-1k`: `COMPLETED`, 950 `DIRECT`, 0 `AUTO_CORRECTED` y 50 en cuarentena, todas `AI_REVIEW_REQUIRED` con
+    análisis y `ai_request_id`, y ninguna con `policy_decision`.
+  - `ai_call_log`: 44 `SUCCESS` y 6 `CACHE_HIT`, todas con `attempts = 1`, así que `aiCalls = 44`, como define
+    AC-08.6. Las 50 filas de cuarentena tienen su llamada.
+  - Tiempos: 1,6 s de la subida a `COMPLETED`; 98,9 s de `up --build --wait` con el código nuevo; 1,5 s de `down -v`.
+- Decisión del owner (2026-11-08): "Apruebo en feat/FR-08-quarantine-classifier: cablear HttpAiTriageClient como
+  bean de AiTriagePort y borrar DisabledAiTriagePort sin flags; mover las variantes de Reply a TriageOutcome; que
+  RecordProcessor asigne quarantine_reason según 02 §5, con AUTO_FIXABLE en AI_REVIEW_REQUIRED de forma provisional
+  hasta el Sprint 4, y que cualquier excepción, también al escribir ai_call_log, termine en PROCESSING_ERROR;
+  escribir ai_analysis con el cuerpo recibido, max_severity de Result.Valid, ai_request_id en toda llamada intentada
+  (sustituye a D66) y ai_calls_count desde ai_call_log al completar; para U+0000 en ai_analysis y summary, la opción
+  A; apuntar los tests de Spring a http://127.0.0.1:1; añadir IngestionJobTriageTest con un transformador de
+  WireMock en loopback; hacer la comprobación manual con docker compose y el mock; cambiar los tests existentes
+  listados en el plan, incluida la expectativa de ai_request_id de ProcessedRecordWriterTest; y añadir la entrada al
+  CHANGELOG y la nota en docs/06 A.5."
+- **Provisional hasta el Sprint 4:** un registro con todas sus violaciones `AUTO_FIXABLE` va a cuarentena con
+  `AI_REVIEW_REQUIRED`, aunque `02` l.161 define ese motivo para "al menos una `NEEDS_HUMAN_REVIEW`". Sin
+  `CorrectionPolicy` no se corrige nada, y `POLICY_REJECTED` afirmaría que actuó una política que no existe. Las
+  métricas por motivo cuentan así esos registros hasta el Sprint 4.
+- Decisiones:
+  - D136: las variantes de `Reply` pasan a `TriageOutcome` y `HttpAiTriageClient` implementa `AiTriagePort`. El
+    bean `aiTriagePort` vive en `IngestionJobConfiguration`. | Alternativas: conservar `Reply` y quitar el puerto |
+    Reversible: sí | Aprobado por: owner.
+  - D137: `summary` es el de la IA con `Analysed`, ya acotado a 1 000 code points por el validador, y el texto técnico
+    del pipeline en los motivos `AI_*` y en `PROCESSING_ERROR` (AC-11.2). | Reversible: sí | Aprobado por: owner.
+  - D138: `ai_request_id` va en toda llamada intentada, también en un `PROCESSING_ERROR` ocurrido durante o después
+    de la llamada; si la excepción ocurre antes de llamar, queda `null`. Sustituye a D66. | Reversible: sí |
+    Aprobado por: owner.
+  - D139: `ai_analysis` es el cuerpo tal como llegó, solo con un análisis válido; `max_severity` es la de
+    `Result.Valid`; `policy_decision` queda en `null` hasta el Sprint 4. | Reversible: sí | Aprobado por: owner.
+  - D140: `ai_calls_count` se calcula en `complete()` con la misma cuenta que la API usa durante el lote: filas de
+    `ai_call_log` sin `CACHE_HIT`, fallidas incluidas. | Reversible: sí.
+  - D141: U+0000, opción A. El cliente revisa el árbol JSON del cuerpo entero (claves y cadenas, también las claves
+    que `TriageJson` ignora) después de `TriageJson` y antes del validador. Si aparece, la respuesta es
+    `InvalidResponse`, `ai_call_log` registra `INVALID_RESPONSE` y la fila va a cuarentena con `AI_INVALID_RESPONSE`
+    y `ai_analysis` en `null`. U+0001 se acepta. | Reversible: sí | Aprobado por: owner.
+    - **Medido:** el cuerpo trae U+0000 como el escape JSON `\u0000`, seis caracteres que `text` admite, así que
+      `error_detail` guarda el cuerpo sin cambios. La sustitución por U+FFFD de D131 solo actúa con un byte NUL
+      literal.
+    - ~~Supuesto, sin test~~ **Medido con test** (2026-11-11, rama `fix/FR-01-FR-08-unstorable-values`): `TriageJson`
+      rechaza el byte NUL literal, porque Jackson no admite caracteres de control sin escapar, y `error_detail` lo
+      guarda como U+FFFD.
+  - D142: los tests de Spring apuntan a `http://127.0.0.1:1` desde `PostgresTestConfiguration`.
+    `IngestionJobTriageTest` registra un `HttpAiTriageClient` real con `@Primary` que apunta a WireMock, porque el
+    `DynamicPropertyRegistrar` común gana a `@DynamicPropertySource` (medido: con la propiedad, el job seguía
+    llamando al puerto cerrado). | Alternativas: un perfil de test, o mover la URL fuera de
+    `PostgresTestConfiguration` | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/06-contrato-api.md` (nota de U+0000
+  en A.5) y `docs/CHANGELOG.md`. `contracts/` no cambia.
+- Tests existentes cambiados:
+  - `RecordProcessorTest` y `ProcessedRecordWriterTest`: `DisabledAiTriagePort` pasa a una lambda que devuelve
+    `Unavailable`.
+  - `ProcessedRecordWriterTest`: deja de comprobar `ai_request_id` en `null` y comprueba el id de la petición
+    (sustituye a D66).
+  - `HttpAiTriageClientTest`: `Reply` pasa a `TriageOutcome`. El test que leía la URL por defecto del contexto ahora
+    la lee de `application.yml`, porque el contexto de test apunta a loopback; otro test comprueba esa URL.
+  - `IngestionJobTest` (`dirty-1k`): sus aserciones no cambian; se añaden 50 filas `UNAVAILABLE` y
+    `ai_calls_count = 50`.
+- Pendiente:
+  - Rama `fix/` desde `dev`, después de esta y antes de `v0.3`, con su propio plan: el número fuera del rango de
+    `numeric` en `jsonb` (medido: `1e1000000` da `value overflows numeric format`) y el byte NUL de un CSV en
+    `raw_payload` y `violations` (sin verificar).
+  - Sprint 4: `CorrectionPolicy` y el motivo definitivo de un `AUTO_FIXABLE`, reintentos, circuit breaker,
+    `AiBudget`, el lote agotado ante `429 LLM_BUDGET_EXHAUSTED`, el invariante de timeouts de NFR-07, AC-12.2 y
+    AC-12.5.
+
+## Sprint 3 — Valores que PostgreSQL no puede guardar (2026-11-11)
+- Hecho: el byte NUL en un CSV de entrada (FR-01) y un número fuera del rango de `numeric` en la respuesta de
+  `ai-service` (FR-08) ya no dejan el lote en `FAILED`. Es una sola rama con dos FR, por decisión del owner.
+- Medido antes del arreglo, con tests de job y PostgreSQL real:
+  - Un byte NUL en el CSV dejaba el lote en `FAILED` con `INFRASTRUCTURE_ERROR` en los cinco casos: fila válida, fila
+    inválida, campo inválido, fila `MALFORMED_ROW` y cabecera. Fallaba `sales_transaction` (`text`: `invalid byte
+    sequence for encoding "UTF8": 0x00`), `quarantine_record` (`jsonb`: `unsupported Unicode escape sequence`) o el
+    informe de drift. Ninguna fila llegó a `sales_transaction`.
+  - Un número como `1e1000000` en `correction.parameters`, en un array o en una clave desconocida pasaba
+    `TriageJson` y el validador, y hacía fallar el `INSERT` de `ai_analysis` con `value overflows numeric format`.
+    Mismo resultado: `FAILED` con `INFRASTRUCTURE_ERROR`.
+- Límites de `numeric` medidos en `postgres:18-alpine`:
+  - Se aceptan `1e131071`, `1.0e131071`, `1e-16383` y `1.5e-16382`.
+  - Fallan `1e131072`, `-1e131072`, `10e131071`, `1e-16384`, `1.5e-16383` y `1.50e-16382`: PostgreSQL cuenta también
+    los ceros finales de la escala.
+- Decisión del owner (2026-11-11): "Apruebo la rama fix/FR-01-FR-08-unstorable-values desde dev, que toca FR-01 y
+  FR-08 en un solo PR: que RawRecordReader rechace con INVALID_FILE_FORMAT un archivo cuya cabecera o cualquier línea
+  contenga U+0000, con la nota en docs/02 l.141 y AC-01.7; que HttpAiTriageClient trate como AI_INVALID_RESPONSE una
+  respuesta con un número de más de 131072 dígitos enteros o más de 16383 decimales en cualquier punto del cuerpo, con
+  la frase añadida en la nota de docs/06 A.5; añadir el test del byte NUL literal en la respuesta, sin cambio de
+  código; escribir primero los tests de los cinco casos de NUL de entrada y mostrarlos en rojo en el PR; y añadir la
+  entrada al CHANGELOG."
+- Decisiones:
+  - D143: `RawRecordReader` lanza `InvalidFileFormatException` si la cabecera o un registro contiene U+0000. Como
+    `intakeStep` cuenta con el mismo lector, el lote queda `REJECTED` con `INVALID_FILE_FORMAT` antes de procesar
+    ninguna fila, sin escribir en `sales_transaction`, `quarantine_record` ni `ai_call_log` (AC-01.7, `02` l.141).
+    | Alternativas: convertir la fila en `MALFORMED_ROW` y sustituir el carácter al guardarla; un `ErrorCode` nuevo |
+    Reversible: sí | Aprobado por: owner.
+  - D144: `HttpAiTriageClient` comprueba cada número del cuerpo con el mismo recorrido del árbol que ya busca U+0000:
+    - el árbol se lee con `USE_BIG_DECIMAL_FOR_FLOATS` y sin `STRIP_TRAILING_BIGDECIMAL_ZEROES`;
+    - dígitos enteros = max(precision − scale, 0), calculado en `long` porque `1e2147483647` desborda un `int`;
+    - decimales = max(scale, 0);
+    - se rechaza si pasa de 131 072 dígitos enteros o de 16 383 decimales.
+
+    El resultado es `AI_INVALID_RESPONSE` con `ai_analysis` en `null`. | Alternativas: exigir que el número quepa en
+    un `double`, lo que rechazaría `1e400`, que PostgreSQL admite | Reversible: sí | Aprobado por: owner.
+  - D145: el byte NUL literal en la respuesta no necesitó código. El test nuevo confirma el supuesto de D141, que queda
+    actualizado arriba.
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/02-requisitos-funcionales.md` (l.141 y
+  AC-01.7), `docs/06-contrato-api.md` (nota de A.5) y `docs/CHANGELOG.md`, incluida la actualización de D141.
+  `contracts/` no cambia.
+- Pendiente: el lector JSON de FR-02 (Sprint 6) debe aplicar la regla de `02` l.141 a U+0000, literal o escapado. No se
+  escribe código para eso ahora.
+
+## Sprint 3 — Número que `BigDecimal` no puede leer en la respuesta (2026-11-11)
+- Corregido después de fusionar el #44 (hallado por el revisor): `TriageJson` acepta `1e2147483648` dentro de
+  `correction.parameters`, porque ese mapa no tiene tipo y el valor queda en `Infinity`. Después, `TREE_READER.readTree`
+  lanzaba `NumberFormatException` ("value exceeds limits"), y lo mismo pasaba con `1e-2147483649` y `1e99999999999`. La
+  excepción salía de `triage()` sin pasar por `save()`. Consecuencias:
+  - la fila acababa en `PROCESSING_ERROR`;
+  - no quedaba fila en `ai_call_log`.
+
+  Eso incumplía AC-08.5 y AC-12.3 y contradecía la nota de `06` A.5. Medido con tests en rojo antes del arreglo.
+- Arreglo: `answer()` captura `NumberFormatException` y `JacksonException` alrededor de `TREE_READER.readTree` y las
+  trata como una respuesta inválida con el texto fijo de un número que no cabe en `numeric`, sin el mensaje de la
+  excepción. No se captura `Exception`. Resultado: `AI_INVALID_RESPONSE`, una fila `INVALID_RESPONSE` en
+  `ai_call_log` y el cuerpo en `error_detail`.
+- Decisión del owner (2026-11-11): "Apruebo la rama fix/FR-08-unparseable-number desde dev: que HttpAiTriageClient
+  trate como AI_INVALID_RESPONSE, con su fila INVALID_RESPONSE en ai_call_log y el cuerpo en error_detail, una
+  respuesta cuyo árbol JSON no se pueda leer con BigDecimal, y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D146: `NumberFormatException` y `JacksonException` llevan al mismo texto fijo que D144, porque ambas significan que
+    el cuerpo no cabe en `jsonb`. | Alternativas: un texto propio para cada una | Reversible: sí | Aprobado por: owner.
+- Sin cambios en `docs/06`: la nota de A.5 ya cubre "un número que no cabe en `numeric`".
+- Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`.
+- Sin verificar: la rama de `JacksonException` no tiene test. Un cuerpo que ya aceptó `TriageJson` no debería fallar
+  como JSON en el lector del árbol, así que la captura es solo una defensa.

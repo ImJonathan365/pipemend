@@ -254,4 +254,26 @@ class ValidatorTest {
         assertThat(violation.technicalMessage()).hasSize(1000);
         assertThat(violation.receivedValue()).hasSize(5000);
     }
+
+    @Test
+    void ac_07_2_technicalMessageNeverSplitsAnEmojiAtTheLimit() {
+        // The message is "For input string: \"..." and the emoji is exactly on the character at the limit.
+        String prefix = "For input string: \"";
+        String value = "x".repeat(1000 - 1 - prefix.length()) + "\uD83D\uDE00" + "tail";
+
+        String message = validateWith("quantity", value).getFirst().technicalMessage();
+
+        assertThat(message.codePointCount(0, message.length())).isEqualTo(1000);
+        assertThat(message).endsWith("\uD83D\uDE00");
+    }
+
+    @Test
+    void ac_07_2_theMessageIsTheOriginalOneWithoutAStackTrace() {
+        Violation violation = validateWith("invoice_date", "25/12/2010 08:26").getFirst();
+
+        assertThat(violation.technicalMessage())
+                .startsWith("Text '25/12/2010 08:26' could not be parsed")
+                .doesNotContain("\tat ", "\n");
+        assertThat(violation.exceptionType()).isEqualTo("java.time.format.DateTimeParseException");
+    }
 }

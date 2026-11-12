@@ -1,0 +1,36 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "batchId": "8a2e6d1c-43b2-4f55-8f6b-1f2b3c4d5e6f",
+  "schema": {
+    "name": "sales_transaction",
+    "version": "1"
+  },
+  "source": {
+    "filename": "dirty-1k.csv",
+    "type": "CSV"
+  },
+  "record": {
+    "sourceRowNumber": 311,
+    "raw": {
+      "_rawLine": "536381,22719,GUMBALL MONOCHROME COAT RACK,36,2010-12-01 09:41:00,1.06,15311,United Kingdom,EXTRA"
+    }
+  },
+  "violations": [
+    {
+      "violationId": "v1",
+      "field": "_record",
+      "sourceHeader": null,
+      "errorCode": "MALFORMED_ROW",
+      "receivedValue": null,
+      "expected": {
+        "expectedColumns": 8,
+        "receivedColumns": 9
+      },
+      "technicalMessage": "Expected 8 columns but found 9",
+      "exceptionType": null
+    }
+  ],
+  "options": {
+    "explanationLanguage": "es"
+  }
+}

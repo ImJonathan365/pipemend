@@ -1,21 +1,14 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
+from fastapi import APIRouter, Depends, Request
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.domain.contracts import ContractModel
 
 router = APIRouter(tags=["system"])
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-
-
-class ContractModel(BaseModel):
-    """Base for anything on the wire: docs/06 fixes camelCase for every JSON field."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class HealthResponse(ContractModel):
@@ -66,7 +59,7 @@ def health(settings: SettingsDep) -> HealthResponse:
 
 
 @router.get("/v1/info", summary="Active provider, model and prompt versions")
-def info(settings: SettingsDep) -> InfoResponse:
+def info(settings: SettingsDep, request: Request) -> InfoResponse:
     """AC-17.5. Never exposes the API key, only whether a provider is configured."""
     return InfoResponse(
         service="pipemend-ai-service",
@@ -77,10 +70,12 @@ def info(settings: SettingsDep) -> InfoResponse:
             triage=settings.prompt_version_triage,
             schema_drift=settings.prompt_version_schema,
         ),
-        # `entries` and `llmCallsToday` are real counters from Sprint 3 (LRU cache, NFR-11) and
-        # Sprint 5 (daily cap, AC-08.8). Nothing counts yet, so zero is the truthful answer, not
-        # a placeholder for a feature pretending to exist.
-        cache=CacheInfo(entries=0, max_entries=settings.triage_cache_max_entries),
+        cache=CacheInfo(
+            entries=len(request.app.state.triage_cache),
+            max_entries=settings.triage_cache_max_entries,
+        ),
+        # A real counter from Sprint 5 (daily cap, AC-08.8). Nothing counts yet, so zero is the
+        # truthful answer, not a placeholder for a feature pretending to exist.
         limits=LimitsInfo(
             request_deadline_seconds=settings.ai_request_deadline_seconds,
             max_llm_calls_per_day=settings.llm_max_calls_per_day,

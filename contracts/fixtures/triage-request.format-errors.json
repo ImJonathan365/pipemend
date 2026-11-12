@@ -1,0 +1,82 @@
+{
+  "requestId": "0b6c3f5e-7f0f-4a55-9d0e-2a1f0f1b6a10",
+  "batchId": "8a2e6d1c-43b2-4f55-8f6b-1f2b3c4d5e6f",
+  "schema": {
+    "name": "sales_transaction",
+    "version": "1"
+  },
+  "source": {
+    "filename": "dirty-1k.csv",
+    "type": "CSV"
+  },
+  "record": {
+    "sourceRowNumber": 152,
+    "raw": {
+      "Invoice": "536520",
+      "StockCode": "21123",
+      "Description": "SET/10 IVORY POLKADOT PARTY CANDLES",
+      "Quantity": "12",
+      "InvoiceDate": "25/12/2010 08:26",
+      "Price": "£1,25",
+      "Customer ID": "[REDACTED]",
+      "Country": "UK"
+    }
+  },
+  "violations": [
+    {
+      "violationId": "v1",
+      "field": "invoice_date",
+      "sourceHeader": "InvoiceDate",
+      "errorCode": "INVALID_FORMAT",
+      "receivedValue": "25/12/2010 08:26",
+      "expected": {
+        "type": "datetime",
+        "format": "yyyy-MM-dd HH:mm:ss",
+        "min": "2009-01-01 00:00:00"
+      },
+      "technicalMessage": "Text '25/12/2010 08:26' could not be parsed at index 2",
+      "exceptionType": "java.time.format.DateTimeParseException"
+    },
+    {
+      "violationId": "v2",
+      "field": "unit_price",
+      "sourceHeader": "Price",
+      "errorCode": "INVALID_FORMAT",
+      "receivedValue": "£1,25",
+      "expected": {
+        "type": "decimal",
+        "scale": 2,
+        "min": "0",
+        "max": "100000",
+        "decimalSeparator": "."
+      },
+      "technicalMessage": "Character £ is neither a decimal digit number, decimal point, nor \"e\" notation exponential mark.",
+      "exceptionType": "java.lang.NumberFormatException"
+    },
+    {
+      "violationId": "v3",
+      "field": "country",
+      "sourceHeader": "Country",
+      "errorCode": "INVALID_ENUM_VALUE",
+      "receivedValue": "UK",
+      "expected": {
+        "type": "enum",
+        "allowedValues": [
+          "Australia",
+          "Austria",
+          "Belgium",
+          "EIRE",
+          "France",
+          "Germany",
+          "Spain",
+          "United Kingdom"
+        ]
+      },
+      "technicalMessage": "Value 'UK' is not in catalog countries.v1",
+      "exceptionType": null
+    }
+  ],
+  "options": {
+    "explanationLanguage": "es"
+  }
+}

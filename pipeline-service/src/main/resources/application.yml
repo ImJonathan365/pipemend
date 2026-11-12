@@ -31,6 +31,10 @@ spring:
 pipemend:
   inbox-dir: /data/inbox
   chunk-size: ${PIPELINE_CHUNK_SIZE:100}
+  ai:
+    base-url: ${AI_SERVICE_BASE_URL:http://ai-service:8000}
+    connect-timeout: ${AI_CLIENT_CONNECT_TIMEOUT_MS:2000}ms
+    read-timeout: ${AI_CLIENT_READ_TIMEOUT_MS:30000}ms
 
 server:
   port: 8080
