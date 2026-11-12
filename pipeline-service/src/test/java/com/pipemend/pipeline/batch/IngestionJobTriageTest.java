@@ -17,6 +17,7 @@ import com.pipemend.pipeline.triage.AiClientProperties;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.HttpAiTriageClient;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -77,7 +78,8 @@ class IngestionJobTriageTest {
         NUL_IN_SUMMARY,
         NUL_IN_A_PARAMETER,
         NUL_IN_AN_UNKNOWN_KEY,
-        SOH_IN_SUMMARY
+        SOH_IN_SUMMARY,
+        HUGE_NUMBER_IN_A_PARAMETER
     }
 
     private static volatile Mutation mutation = Mutation.NONE;
@@ -154,6 +156,22 @@ class IngestionJobTriageTest {
     }
 
     @Test
+    void docs06A5_anAnswerWithANumberNumericCannotHoldIsAnInvalidResponse() throws Exception {
+        mutation = Mutation.HUGE_NUMBER_IN_A_PARAMETER;
+        UUID batchId = receive((HEADER + UNKNOWN_COUNTRY).getBytes(StandardCharsets.UTF_8));
+
+        assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        assertThat(quarantined(batchId))
+                .containsEntry("quarantine_reason", "AI_INVALID_RESPONSE")
+                .containsEntry("ai_analysis", null)
+                .containsEntry("max_severity", null);
+        assertThat(count("sales_transaction", batchId, "true")).isZero();
+        assertThat(count("ai_call_log", batchId, "outcome = 'INVALID_RESPONSE'"))
+                .isEqualTo(1);
+    }
+
+    @Test
     void docs06A5_anAnswerWithUPlus0001IsAccepted() throws Exception {
         mutation = Mutation.SOH_IN_SUMMARY;
         UUID batchId = receive((HEADER + UNKNOWN_COUNTRY).getBytes(StandardCharsets.UTF_8));
@@ -217,6 +235,9 @@ class IngestionJobTriageTest {
                 correction.set("originalValue", violation.get("receivedValue"));
                 correction.put("proposedValue", "echo");
                 ObjectNode parameters = correction.putObject("parameters");
+                if (mutation == Mutation.HUGE_NUMBER_IN_A_PARAMETER) {
+                    parameters.put("n", new BigDecimal("1e1000000"));
+                }
                 if (mutation == Mutation.NUL_IN_A_PARAMETER) {
                     parameters.put("note", "a\u0000b");
                 }
