@@ -1306,10 +1306,10 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 
   | Sprint | Días | Horas reales | Realista en `07` |
   |---|---|---|---|
-  | S1 | 8 | ≈ 20 h | |
-  | S2 | 9 | ≈ 22 h | |
-  | S3 | 11 | ≈ 28 h | |
-  | **Total** | 28 | **≈ 70 h** | 34–41 h |
+  | S1 | 8 | ≈ 20 h | 12–14 h |
+  | S2 | 9 | ≈ 22 h | 12–15 h |
+  | S3 | 11 | ≈ 28 h | 10–12 h |
+  | **Total** | 28 | **≈ 70 h** | 34–41 h (`07` l.16-18) |
 
   Estimación del Sprint 4: 24–32 h reales, frente a las ~14 h de `07` l.113. No se recorta nada del Sprint 4. Si al
   cerrar su semana `v0.4` no está etiquetada, se avisa con la estimación restante y el owner aplica `07` l.190.
@@ -1368,3 +1368,47 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `confidence >= AI_ENUM_MIN_CONFIDENCE` (`02` §4, condición 3). El duplicado con la política es intencionado.
   - Rama `test/FR-20-ac-20-3`: el comando local que construye la imagen de `ai-service` antes de `./gradlew test` va
     en `AGENTS.md` y en el README.
+
+## Sprint 4 — Verificadores de texto (2026-11-13)
+- Hecho: la parte de texto de `07` l.106, sin cablear al job. Son los verificadores de `TRIM`, `NORMALIZE_CASE`,
+  `NULLIFY_TOKEN` y `MAP_TO_ENUM` (`02` l.117-126), con `country-aliases.v1.yaml` leído y nunca modificado.
+  - AC-10.1 queda parcial: faltan los verificadores `PARSE_*` (rama 3).
+  - AC-10.5: los siete códigos, que se guardan en `policy_decision` con el aplicador (rama 4).
+- `CountryAliases` es un bean de `CoreConfiguration` que se carga al arrancar, como `SchemaDefinition`. La aplicación
+  no arranca si el YAML trae un país fuera del catálogo, un alias normalizado que apunta a dos países, o un catálogo
+  distinto de `countries.v1.txt`. Lo prueba `ApplicationContextRunner`.
+- Medido antes del código, sobre el YAML y el catálogo reales (solo lectura): 41 países en el catálogo, 40 con alias
+  y 118 alias. Ningún país del YAML falta en el catálogo, ningún alias es ambiguo y no hay dos países con la misma
+  forma normalizada.
+- Corregida la tabla de horas del Sprint 4 (pedido del owner): la columna "Realista en `07`" lleva S1 12–14 h, S2
+  12–15 h y S3 10–12 h (`07` l.16-18).
+- Decisión del owner (2026-11-13): "Apruebo en feat/FR-10-text-verifiers: crear en verifiers/ Verifier,
+  VerificationInput, VerificationResult, VerificationCode con los siete códigos de AC-10.5, los verificadores TRIM,
+  NORMALIZE_CASE, NULLIFY_TOKEN y MAP_TO_ENUM según docs/02 §4, con la comprobación repetida de
+  AI_ENUM_MIN_CONFIDENCE en MAP_TO_ENUM, y CountryAliases como lector de solo lectura de
+  schemas/country-aliases.v1.yaml que falla al arrancar ante un país fuera del catálogo o un alias ambiguo, sin
+  cablear al job; las decisiones A a E como propone el plan; y añadir la entrada al CHANGELOG con la columna
+  "Realista en 07" de la tabla de horas."
+- Decisiones:
+  - D152: el valor original que se verifica es el `receivedValue` que envió el pipeline, nunca el `originalValue`
+    que devuelve la IA. | Reversible: sí | Aprobado por: owner.
+  - D153: `detail` es un texto fijo sin valores del registro. El ejemplo de `05` §5 cita el valor, pero la forma
+    `{ passed, code, detail }` es la misma. | Reversible: sí | Aprobado por: owner.
+  - D154: el cargador de alias falla al arrancar ante un país fuera del catálogo o un alias ambiguo (ADR-0008). Hoy
+    no ocurre, según lo medido arriba. | Reversible: sí | Aprobado por: owner.
+  - D155: la condición (3) de `MAP_TO_ENUM`, la confianza, se rechaza con `UNVERIFIABLE_MAPPING`, porque AC-10.5 no
+    tiene un código propio para la confianza. Esa comprobación se repite a propósito con la de la política (AC-09.1).
+    | Reversible: sí | Aprobado por: owner.
+  - D156: un verificador ante un campo que no es suyo falla con `VALUE_MISMATCH` en vez de lanzar una excepción, como
+    defensa en profundidad tras `FIELD_NOT_ALLOWED`. | Reversible: sí | Aprobado por: owner.
+  - D157: `NORMALIZE_CASE` compara `toLowerCase(Locale.ROOT)` en los dos lados. `02` §4 escribe "`equalsIgnoreCase`
+    (con `Locale.ROOT`)", pero `String.equalsIgnoreCase` no recibe locale, y pasar los dos lados por
+    `toLowerCase(Locale.ROOT)` es la lectura literal de "con `Locale.ROOT`". Cualquiera de las dos sirve, porque
+    `proposed` además tiene que estar en el catálogo o cumplir la regex. | Reversible: sí.
+  - D158: `TRIM` usa `Whitespace.strip`, que solo quita U+0020 y tab (`02` l.72), y nunca `String.strip()`. Esta
+    quitaría U+2003, U+3000 o un salto de línea. Lo cubre un test con esos caracteres. El NBSP no distingue entre las
+    dos, porque `String.strip()` tampoco lo quita. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `verifiers/**` (nuevos) y
+  `docs/CHANGELOG.md`. 🔴 `schemas/country-aliases.v1.yaml` solo se lee.
+- Fuera del plan de archivos, pedido por el owner en la aprobación: `common/CoreConfiguration.java` declara el bean
+  `CountryAliases`.
