@@ -1299,3 +1299,72 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`.
 - Sin verificar: la rama de `JacksonException` no tiene test. Un cuerpo que ya aceptó `TriageJson` no debería fallar
   como JSON en el lector del árbol, así que la captura es solo una defensa.
+
+## Sprint 4 — Registro de horas y punto de control del Sprint 2 (2026-11-12)
+- Registro de horas reales (`07` §4 bis). El owner las estimó a partir de los días con actividad en git y en las
+  sesiones, a 2,5 h por día:
+
+  | Sprint | Días | Horas reales | Realista en `07` |
+  |---|---|---|---|
+  | S1 | 8 | ≈ 20 h | |
+  | S2 | 9 | ≈ 22 h | |
+  | S3 | 11 | ≈ 28 h | |
+  | **Total** | 28 | **≈ 70 h** | 34–41 h |
+
+  Estimación del Sprint 4: 24–32 h reales, frente a las ~14 h de `07` l.113. No se recorta nada del Sprint 4. Si al
+  cerrar su semana `v0.4` no está etiquetada, se avisa con la estimación restante y el owner aplica `07` l.190.
+- Decisión del owner (2026-11-12): se aplica con retraso el punto de control del fin del Sprint 2 (`07` l.189: "Horas
+  acumuladas S1+S2 > 26 h, o `v0.2` sin etiquetar → Recortar ya FR-22 y el endpoint de FR-21 (se conserva el test de
+  idempotencia)").
+  - Recortados: FR-22 (resolución de cuarentena) y el endpoint de reinicio de FR-21.
+  - Se conserva: el test de idempotencia de FR-21.
+  - `docs/07` no cambia y no se recorta nada más. FR-05 se decide en el punto de control del Sprint 6 (`07` l.191);
+    las horas acumuladas ya superan las 60 h que ese punto fija.
+
+## Sprint 4 — `CorrectionPolicy` (2026-11-12)
+- Hecho: FR-09, sin cablear al job. `07` l.105: "`CorrectionPolicy` + tests parametrizados".
+  - AC-09.1: las condiciones por violación, sin leer `recordDecision`.
+  - AC-09.3: el motivo de cada rechazo.
+  - AC-09.4: umbrales y allowlist configurables, con arranque fallido.
+  - AC-09.5: tests parametrizados.
+  - AC-09.2: la política devuelve "todo o nada"; el motivo en `quarantine_record` llega con el aplicador.
+
+  Hasta entonces, un `AUTO_FIXABLE` sigue en cuarentena con `AI_REVIEW_REQUIRED` (provisional).
+- Valores por defecto implementados tal como están documentados, en `application.yml`:
+  - `AI_MIN_CONFIDENCE` 0.85 y `AI_ENUM_MIN_CONFIDENCE` 0.90 (`04` l.292-293);
+  - la allowlist de `02` §4 sin `RENAME_COLUMN`, que es solo de FR-05.
+
+  `CorrectionCatalog` guarda ese universo; la allowlist configurada solo puede reducirlo.
+- Decisión del owner (2026-11-12): "Apruebo en feat/FR-09-correction-policy: crear CorrectionPolicy,
+  PolicyEvaluation, RejectionReason, PolicyProperties y CorrectionCatalog en policy/, sin cablear al job; implementar
+  en application.yml los umbrales por defecto AI_MIN_CONFIDENCE 0.85 y AI_ENUM_MIN_CONFIDENCE 0.90 y la allowlist por
+  defecto de docs/02 §4 tal como están documentados, con arranque fallido según AC-09.4; el orden de motivos y la
+  excepción ante NEEDS_HUMAN_REVIEW como propone el plan; y añadir al CHANGELOG la entrada de la rama, el registro de
+  horas S1–S3 y el recorte de FR-22 y del endpoint de FR-21 con la cita de docs/07 l.189."
+- Decisiones:
+  - D147: cada violación guarda un solo motivo, el de la primera condición que falla, en este orden:
+    `ERROR_CODE_NOT_CORRECTABLE`, `OPERATION_NOT_ALLOWED`, `FIELD_NOT_ALLOWED`, `SEVERITY_TOO_HIGH` y
+    `CONFIDENCE_BELOW_THRESHOLD`. Primero va lo estructural y después lo que depende de la IA. `05` §5 prevé un único
+    `rejectionReason`. | Alternativas: guardar todos los motivos, lo que cambiaría `05` | Reversible: sí | Aprobado
+    por: owner.
+  - D148: un análisis `NEEDS_HUMAN_REVIEW` que llega a la política lanza `IllegalStateException` con un mensaje fijo y
+    sin valores; la política no la captura. Esos registros van antes a `AI_REVIEW_REQUIRED` (`04` l.133), así que
+    llegar aquí es un bug, y termina en `PROCESSING_ERROR`. Lo mismo si los análisis no emparejan con las violaciones.
+    | Alternativas: un motivo `NOT_AUTO_FIXABLE`, que sería un valor nuevo | Reversible: sí | Aprobado por: owner.
+  - D149: la allowlist solo se configura por propiedad (`pipemend.policy.allowlist`), sin variable de entorno nueva.
+    `.env.example` y `04` §8 no cambian. Una operación fuera del enum ya falla al enlazar la configuración. | Reversible:
+    sí | Aprobado por: owner.
+  - D150: `MAP_TO_ENUM` usa solo `AI_ENUM_MIN_CONFIDENCE`, también si se configura por debajo del umbral general; lo
+    cubre un test. | Reversible: sí.
+  - D151: la parte `verification` de `policy_decision` (`05` §5) no se modela aquí. El JSON completo lo compone el
+    aplicador, cuando existan los verificadores, sin dejar un campo vacío ahora. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  - 🔴 los valores por defecto de umbrales y allowlist en `application.yml`, y `CorrectionCatalog`, implementados sin
+    cambiar lo documentado;
+  - 🟠 `policy/**`;
+  - 🟠 `docs/CHANGELOG.md`.
+- Pendiente:
+  - Rama `feat/FR-10-text-verifiers`: el verificador de `MAP_TO_ENUM` vuelve a comprobar
+    `confidence >= AI_ENUM_MIN_CONFIDENCE` (`02` §4, condición 3). El duplicado con la política es intencionado.
+  - Rama `test/FR-20-ac-20-3`: el comando local que construye la imagen de `ai-service` antes de `./gradlew test` va
+    en `AGENTS.md` y en el README.
