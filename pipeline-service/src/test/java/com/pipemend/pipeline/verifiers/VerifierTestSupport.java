@@ -27,4 +27,14 @@ final class VerifierTestSupport {
         return new VerificationInput(
                 field, original, new TriageResponse.Correction(operation, original, proposed, Map.of()), confidence);
     }
+
+    static VerificationInput input(
+            String field,
+            @Nullable String original,
+            Operation operation,
+            @Nullable String proposed,
+            Map<String, @Nullable Object> parameters) {
+        return new VerificationInput(
+                field, original, new TriageResponse.Correction(operation, original, proposed, parameters), 0.99);
+    }
 }
