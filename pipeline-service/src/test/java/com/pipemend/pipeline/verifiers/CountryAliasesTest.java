@@ -9,6 +9,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** The loader of country-aliases.v1.yaml: the real file, and hand-written broken ones. */
 class CountryAliasesTest {
@@ -49,6 +50,15 @@ class CountryAliasesTest {
                         () -> CountryAliases.load(yaml("\"Austria\": [\"AU\"]\n  \"Australia\": [\"a.u.\"]"), COUNTRY))
                 .isInstanceOf(SchemaLoadException.class)
                 .hasMessageContaining("ambiguous");
+    }
+
+    /** An alias in another script would map every value that also normalizes to nothing, like "?" or "--". */
+    @ParameterizedTest
+    @ValueSource(strings = {"\u65E5\u672C", "--", "?"})
+    void anAliasThatNormalizesToNothingFailsToLoad(String alias) {
+        assertThatThrownBy(() -> CountryAliases.load(yaml("\"Austria\": [\"" + alias + "\"]"), COUNTRY))
+                .isInstanceOf(SchemaLoadException.class)
+                .hasMessageContaining("normalizes to an empty value");
     }
 
     @Test

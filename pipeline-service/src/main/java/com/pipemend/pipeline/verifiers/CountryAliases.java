@@ -15,8 +15,8 @@ import org.yaml.snakeyaml.error.YAMLException;
 
 /**
  * schemas/country-aliases.v1.yaml, read only. It fails to load, and so the application fails to start, when a country
- * is not in the catalogue or an alias normalizes to two countries: an ambiguous alias would accept two readings
- * (ADR-0008).
+ * is not in the catalogue, an alias normalizes to two countries or to nothing: an ambiguous alias would accept two
+ * readings (ADR-0008).
  */
 public final class CountryAliases {
 
@@ -47,7 +47,13 @@ public final class CountryAliases {
                 if (!(alias instanceof String text)) {
                     throw new SchemaLoadException("country aliases: " + countryName + " has an alias that is not text");
                 }
-                String previous = countryByAlias.putIfAbsent(normalize(text), countryName);
+                String normalized = normalize(text);
+                // An alias in another script normalizes to nothing, and "?" or "--" would then map to its country.
+                if (normalized.isEmpty()) {
+                    throw new SchemaLoadException(
+                            "country aliases: an alias of " + countryName + " normalizes to an empty value");
+                }
+                String previous = countryByAlias.putIfAbsent(normalized, countryName);
                 if (previous != null && !previous.equals(countryName)) {
                     throw new SchemaLoadException(
                             "country aliases: " + text + " is ambiguous between " + previous + " and " + countryName);
