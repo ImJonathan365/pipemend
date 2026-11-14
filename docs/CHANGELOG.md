@@ -1412,3 +1412,58 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `docs/CHANGELOG.md`. 🔴 `schemas/country-aliases.v1.yaml` solo se lee.
 - Fuera del plan de archivos, pedido por el owner en la aprobación: `common/CoreConfiguration.java` declara el bean
   `CountryAliases`.
+
+## Sprint 4 — Verificadores de parseo (2026-11-13)
+- Hecho: la parte de parseo de `07` l.106, sin cablear al job. Son los verificadores de `PARSE_DATE` y
+  `PARSE_NUMBER` (`02` l.123-124). Con ellos están los seis de AC-10.1, y se usan los siete códigos de AC-10.5. La tabla
+  que asigna un verificador a cada operación llega con el aplicador.
+  - `PARSE_DATE`:
+    - patrón con hora y minuto, y sin zona ni texto localizado;
+    - modo `STRICT` con `y` → `u`;
+    - el resultado en formato canónico tiene que ser **exactamente** `proposed`;
+    - `AMBIGUOUS_DATE` si el patrón con día y mes intercambiados da otra fecha.
+  - `PARSE_NUMBER`:
+    - solo se quita un `£`, y solo en `unit_price`; cualquier otro símbolo de moneda (categoría `Sc`) da
+      `CURRENCY_NOT_CONVERTIBLE`;
+    - separadores válidos y distintos;
+    - la regla (4) de miles y los grupos de miles (B2) dan `AMBIGUOUS_NUMBER`;
+    - `SIGN_CHANGED`;
+    - en `quantity` y `customer_id`, sin parte fraccionaria, y `customer_id` sin decimales.
+- Defensa del cargador ya aprobado, pedida por el owner: `CountryAliases` falla al arrancar si un alias se normaliza a
+  una cadena vacía, como "日本", "?" o "--". Si no, cualquier valor que también quedara vacío se mapearía a ese país.
+  Hoy no hay ninguno en el YAML real (medido por el revisor).
+- Decisión del owner (2026-11-13): "Apruebo en feat/FR-10-parse-verifiers: crear en verifiers/ ParseDateVerifier y
+  ParseNumberVerifier según docs/02 §4, con detección de AMBIGUOUS_DATE, AMBIGUOUS_NUMBER, CURRENCY_NOT_CONVERTIBLE y
+  SIGN_CHANGED, sin cablear al job; que CountryAliases falle al arrancar con un alias normalizado vacío; las decisiones
+  A, B2, C y D como propone el plan; y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D159: "zona o texto localizado" (`02` l.123, con los ejemplos `MMM`, `EEE`, `a`, `z`, `X`) se lee como esas dos
+    familias completas:
+    - zona: `z`, `Z`, `X`, `x`, `O`, `V`, `v`;
+    - texto: `E`, `a`, `G`, `B`, y `M`, `L`, `Q`, `q` repetidas 3 o más veces.
+
+    Cualquiera de ellas da `INVALID_PARAMETERS`; las demás letras numéricas se permiten. | Reversible: sí | Aprobado
+    por: owner.
+  - D160 (B2): con `groupingSeparator` no nulo, la parte entera tiene un primer grupo de 1 a 3 dígitos y exactamente 3
+    dígitos detrás de cada separador de miles. Si no, `AMBIGUOUS_NUMBER`, comprobado antes que el valor, igual que la
+    regla (4).
+    - **Por qué:** sin esta regla, "12,34" con miles "," daría 1234 (×100) y "2,5" daría 25 (×10). La regla (4) no los
+      detecta, porque detrás del separador no hay exactamente 3 dígitos. Eso incumple `02` l.131 ("nunca … cambiar el
+      signo o la magnitud de un número") y repite el fallo que motivó ADR-0008 (l.14).
+    - **Sin ADR:** no hay un verificador previo que cambiar, y B2 aplica reglas ya escritas: `02` l.131 y el principio
+      de `02` §4 de rechazar cuando la entrada admite más de una interpretación razonable.
+
+    | Alternativas: B1, la letra de (2) sin comprobar grupos | Reversible: sí | Aprobado por: owner.
+  - D161: el verificador ignora `parameters.strippedSymbols` y mira los símbolos en `s`. | Reversible: sí | Aprobado
+    por: owner.
+  - D162: como mucho un `£`, al inicio o al final de `s`, y un signo `-` o `+` delante de los dígitos, antes o después
+    del `£` (`"-£2.55"`, `"£-2.55"`), igual que lo que el validador detecta en `unit_price` (`02` l.104). Un `£` en otro
+    sitio, o dos, da `VALUE_MISMATCH`. | Reversible: sí | Aprobado por: owner.
+  - D163: el signo (3) se comprueba antes de comparar el valor (2), y no después, como decía el plan. Si no, `"-2.55"` →
+    `2.55` saldría como `VALUE_MISMATCH` en vez de `SIGN_CHANGED`. Un `proposed` con `+` o `-` cuando `s` no tiene
+    signo también es `SIGN_CHANGED` ("no hay signo nuevo"). | Reversible: sí.
+  - D164: la regla de ambigüedad de `PARSE_DATE` se aplica tal como está escrita: si el patrón tiene día y mes
+    numéricos, se prueba el intercambio, también con `yyyy/MM/dd`. Por eso `2010/12/03` en `yyyy/MM/dd` es
+    `AMBIGUOUS_DATE`, porque `yyyy/dd/MM` da el 12 de marzo. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `verifiers/**` (`ParseDateVerifier` y
+  `ParseNumberVerifier`, nuevos; `CountryAliases`) y `docs/CHANGELOG.md`.
