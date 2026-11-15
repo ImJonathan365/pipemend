@@ -1496,7 +1496,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `ai_explanation`, `ai_provider`, `ai_model`, `prompt_version` y `ai_request_id`. Todo sale de la petición, la
   respuesta validada y su `meta`; no queda nada para la rama siguiente. `id` y `applied_at` los pone la base de datos;
   `batch_id` y `source_row_number`, el writer.
-- Pedido por el owner, sin frase propia: `ParseDateVerifier` construye los formatters con `Locale.ROOT`.
+- Pedido por el owner: `ParseDateVerifier` construye los formatters con `Locale.ROOT`.
   - **Medido antes del cambio:** con el patrón `YYYY-ww-e HH:mm`, la entrada `2010-02-1 08:26` daba el 3 de enero con
     el locale por defecto `ROOT` o `en_US`, el 11 con `fr_FR` y el 2 con `ar_EG`.
   - Un test fija esos cuatro locales por defecto y exige el mismo resultado (NFR-13, `02` l.73).
@@ -1517,7 +1517,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - D168: `confidence` se redondea con `HALF_UP` a 3 decimales en el aplicador, para la columna `numeric(4,3)`, en vez
     de dejar que redondee PostgreSQL (NFR-13). | Reversible: sí | Aprobado por: owner.
   - D169: el writer de `correction_log` (rama 5) no usará `ON CONFLICT`; un conflicto hará fallar el chunk (`09`
-    §2.2). | Reversible: sí | Aprobado por: owner.
+    §2.2). | Reversible: sí | Aprobado por: owner. **Revertida por D176** (rama 5).
   - D170: forma de `policy_decision`, según el ejemplo de `05` §5:
     - `POLICY_REJECTED`: `approved: false`, `stage: POLICY`, y `verification` en `null` en cada violación;
     - `VERIFICATION_FAILED`: `approved: false`, `stage: VERIFICATION`, y cada violación con `approved: true` y su
@@ -1531,3 +1531,66 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Pendiente para la rama `feat/FR-10-auto-correction-load`, por indicación del owner: comprobar que `complete()`
   calcula `auto_corrected_count` y que el invariante de NFR-06 cuenta las filas `AUTO_CORRECTED`, con un test de job.
   Si no, el primer lote con correcciones acabaría en `INVARIANT_VIOLATION`.
+
+## Sprint 4 — Carga `AUTO_CORRECTED` (2026-11-15)
+- Rama `feat/FR-10-auto-correction-load`, la quinta del plan. Cablea el `CorrectionApplier` al job: es la primera rama
+  que carga filas `AUTO_CORRECTED` (FR-10, AC-10.3, AC-10.4; AC-09.3 al guardar `policy_decision`).
+  - `RecordProcessor` sigue el orden de `04` §4: con una respuesta válida, `NEEDS_HUMAN_REVIEW` (recalculado) va a
+    `AI_REVIEW_REQUIRED`; si no, el aplicador decide entre `AUTO_CORRECTED` y `POLICY_REJECTED`,
+    `VERIFICATION_FAILED` o `REVALIDATION_FAILED`. Desaparece el paso provisional `AUTO_FIXABLE` →
+    `AI_REVIEW_REQUIRED`.
+  - `ProcessedRecordWriter` escribe en el orden de `05` l.290: `sales_transaction` → `correction_log` →
+    `quarantine_record`. `QuarantineWriter` guarda `policy_decision` con la forma de D170.
+- Pendiente de la rama 4, resuelto: `complete()` ya calculaba `auto_corrected_count` desde las tablas, y el invariante
+  de NFR-06 ya sumaba las filas `AUTO_CORRECTED`; no hizo falta código. Lo comprueban un test de job con cinco filas
+  escritas a mano (una por resultado) y dos fallos inyectados.
+- AC-10.4, medido: con un `explanation` que contiene U+0000, PostgreSQL rechaza el INSERT en `correction_log`
+  (`DataIntegrityViolationException`, `invalid byte sequence for encoding "UTF8": 0x00`) y el chunk entero se
+  deshace, también la venta `DIRECT` y la `AUTO_CORRECTED`. En producción ese texto no llega: el cliente HTTP ya
+  rechaza cualquier U+0000 de la respuesta como `AI_INVALID_RESPONSE` (`06` A.5).
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-10-auto-correction-load: cablear CorrectionApplier en
+  RecordProcessor y en el job, con Loaded solo construible desde Corrected; CorrectionLogWriter con ON CONFLICT
+  (batch_id, source_row_number, field_name) DO NOTHING y assertUpdates(false), como exigen ADR-0007 y docs/03 l.54,
+  revirtiendo D169 con una decisión nueva en el CHANGELOG; el orden sales_transaction → correction_log →
+  quarantine_record y policy_decision en QuarantineWriter; eliminar el AUTO_FIXABLE provisional; los tests nuevos y
+  los cambios en IngestionJobTriageTest, RecordProcessorTest, RecordTestSupport y ProcessedRecordWriterTest como
+  propone el plan, con los ajustes de abajo; las decisiones D171, D173, D174 y D175 como se recomiendan y D172
+  sustituida como se indica abajo; los dos arreglos menores y la entrada del CHANGELOG."
+- Decisiones:
+  - D171: `ProcessedRecord.Loaded` es una clase con constructor privado y dos factorías, `direct` y
+    `autoCorrected(tx, Corrected)`, que comprueban `load_origin`. Ninguna fila `AUTO_CORRECTED` llega al writer sin un
+    `Corrected`, que solo construye el aplicador. Alternativa: un record con `List<AppliedCorrection>`, que cualquiera
+    podría rellenar a mano. | Reversible: sí | Aprobado por: owner.
+  - D172: AC-10.4 se prueba con un fallo real de PostgreSQL al escribir `correction_log`: el aplicador real, con una
+    respuesta hecha a mano cuyo `explanation` contiene U+0000. Sin triggers ni writers falsos. Sustituye al registro
+    repetido del plan, que con D176 ya no falla. | Reversible: sí | Aprobado por: owner.
+  - D173: el test de job con `dirty-1k` y el eco que propone `"echo"` exige que los 50 rechazos estén en
+    `{POLICY_REJECTED, VERIFICATION_FAILED}` con `policy_decision`, sin fijar el reparto entre ambos, que sería copiar la
+    salida medida. | Reversible: sí | Aprobado por: owner.
+  - D174: el aplicador es un bean singleton de `IngestionJobConfiguration`, no `@StepScope`: no tiene estado, y usa el
+    mismo `Validator` que encontró las violaciones (AC-10.2). | Reversible: sí | Aprobado por: owner.
+  - D175: un `MALFORMED_ROW` con respuesta `AUTO_FIXABLE` llega al aplicador con un mapa de campos vacío; la política lo
+    rechaza (`ERROR_CODE_NOT_CORRECTABLE`) antes de que nada lea los campos, y `policy_decision` queda registrado.
+    Ningún camino se salta la política (`04` §4). | Reversible: sí | Aprobado por: owner.
+  - D176: revierte D169. `CorrectionLogWriter` usa `ON CONFLICT (batch_id, source_row_number, field_name) DO NOTHING`
+    con `assertUpdates(false)`, como red de seguridad para reinicios (AC-04.4), igual que las demás escrituras: lo
+    exigen ADR-0007 (Accepted, l.13-14: "Escrituras con `INSERT ... ON CONFLICT DO NOTHING`") y `03` l.54 (NFR-04:
+    "Todas las escrituras usan `INSERT ... ON CONFLICT DO NOTHING`"). D169 contradecía ambos textos, y también
+    `09` l.42. `09` l.85 pide parar ante un `ON CONFLICT DO NOTHING` nuevo: se paró, y lo decidió el owner. Un test de AC-04.4 escribe
+    el mismo registro corregido dos veces en un chunk: termina bien, con una venta y un solo juego de correcciones.
+    | Reversible: con ADR | Aprobado por: owner.
+- Tests existentes que cambian, con el motivo:
+  - `IngestionJobTriageTest`: `docs07_everyAutoFixableRecordIsQuarantinedForReviewUntilThePolicyExists` pasa a
+    `docs07_anAutoFixableAnswerThatDoesNotVerifyNeverLoads` y exige los motivos de D173 con `policy_decision`; el
+    test de U+0001 espera `VERIFICATION_FAILED` en lugar de `AI_REVIEW_REQUIRED`, con la misma comprobación del
+    resumen; el javadoc de la clase ya no dice que falte la política.
+  - `RecordProcessorTest`: el test parametrizado conserva solo el caso `NEEDS_HUMAN_REVIEW` y se renombra; el fixture
+    `auto-fixable.json` no corresponde a las violaciones del registro y, con la política, acabaría en
+    `PROCESSING_ERROR`. Los casos `AUTO_FIXABLE` pasan a tests nuevos construidos desde la petición real. No se toca
+    `contracts/fixtures`.
+  - `RecordTestSupport.processor` construye el aplicador real con los valores por defecto de `application.yml`.
+  - `ProcessedRecordWriterTest`: el writer recibe el `CorrectionLogWriter`, y los dos `Quarantined` construidos a mano
+    llevan `policyDecision = null`.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `policy/CorrectionApplier.java` (solo el
+  comentario D152 → D165) y 🟠 `docs/CHANGELOG.md`. Arreglo menor en la entrada anterior: se quita "sin frase propia" de
+  la línea de `Locale.ROOT`, porque la frase del owner lo incluía.

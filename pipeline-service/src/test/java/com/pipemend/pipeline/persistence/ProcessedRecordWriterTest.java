@@ -9,6 +9,7 @@ import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
 import com.pipemend.pipeline.batch.RawRecord;
 import com.pipemend.pipeline.batch.RecordTestSupport;
 import com.pipemend.pipeline.schema.SchemaDefinition;
+import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.contract.Severity;
 import java.math.BigDecimal;
@@ -60,7 +61,9 @@ class ProcessedRecordWriterTest {
     @BeforeEach
     void setUp() {
         writer = new ProcessedRecordWriter(
-                new SalesTransactionWriter(dataSource), new QuarantineWriter(dataSource, json));
+                new SalesTransactionWriter(dataSource),
+                new CorrectionLogWriter(dataSource, json),
+                new QuarantineWriter(dataSource, json));
         batchId = insertBatch();
     }
 
@@ -245,7 +248,8 @@ class ProcessedRecordWriterTest {
                 QuarantineReason.AI_REVIEW_REQUIRED,
                 "summary of the AI",
                 new ProcessedRecord.AiAnalysis(body, Severity.HIGH),
-                requestId));
+                requestId,
+                null));
 
         Map<String, Object> row = jdbc.sql("""
                         SELECT ai_analysis::text AS ai_analysis, max_severity, ai_request_id, policy_decision, summary
@@ -271,6 +275,7 @@ class ProcessedRecordWriterTest {
                 QuarantineReason.AI_UNAVAILABLE,
                 "x",
                 null,
+                null,
                 null);
 
         assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> {
@@ -283,6 +288,123 @@ class ProcessedRecordWriterTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(count("sales_transaction")).isZero();
         assertThat(count("quarantine_record")).isZero();
+    }
+
+    @Test
+    void ac_10_3_aCorrectedRecordWritesItsSaleAndOneCorrectionRowWithEveryColumnEvenWhenItComesLast() throws Exception {
+        Map<String, String> invalid = RecordTestSupport.validRow();
+        invalid.put("Country", "Atlantis");
+
+        // docs/05 section 4: the order of the tables, never the order of the chunk; the foreign key needs the sale.
+        write(processByAi(new RawRecord.Parsed(1, invalid), "Echo"), processByAi(corrected(2), "Outer spaces"));
+
+        assertThat(rowNumbers("sales_transaction")).containsExactly(2);
+        assertThat(rowNumbers("quarantine_record")).containsExactly(1);
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT batch_id, source_row_number, field_name, error_code, operation,
+                            operation_params::text AS operation_params, original_value, corrected_value, confidence,
+                            severity, ai_explanation, ai_provider, ai_model, prompt_version, ai_request_id,
+                            id IS NOT NULL AND applied_at IS NOT NULL AS generated
+                        FROM correction_log WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(row)
+                .containsEntry("batch_id", batchId)
+                .containsEntry("source_row_number", 2)
+                .containsEntry("field_name", "country")
+                .containsEntry("error_code", "INVALID_ENUM_VALUE")
+                .containsEntry("operation", "TRIM")
+                .containsEntry("operation_params", "{}")
+                .containsEntry("original_value", "  United Kingdom ")
+                .containsEntry("corrected_value", "United Kingdom")
+                .containsEntry("confidence", new BigDecimal("0.970"))
+                .containsEntry("severity", "LOW")
+                .containsEntry("ai_explanation", "Outer spaces")
+                .containsEntry("ai_provider", "mock")
+                .containsEntry("ai_model", "mock-rules-v1")
+                .containsEntry("prompt_version", "triage_v1")
+                .containsEntry("ai_request_id", lastRequestId)
+                .containsEntry("generated", true);
+        assertThat(jdbc.sql("SELECT load_origin, country FROM sales_transaction WHERE batch_id = :id")
+                        .param("id", batchId)
+                        .query()
+                        .singleRow())
+                .containsEntry("load_origin", "AUTO_CORRECTED")
+                .containsEntry("country", "United Kingdom");
+    }
+
+    @Test
+    void ac_09_3_ac_10_5_theDecisionOfARejectedRecordIsStoredWithTheShapeOfDocs05() throws Exception {
+        Map<String, String> invalid = RecordTestSupport.validRow();
+        invalid.put("Country", "Atlantis");
+
+        write(processByAi(new RawRecord.Parsed(1, invalid), "Echo"));
+
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT quarantine_reason, policy_decision::text AS policy_decision
+                        FROM quarantine_record WHERE batch_id = :id
+                        """).param("id", batchId).query().singleRow();
+        assertThat(row).containsEntry("quarantine_reason", "VERIFICATION_FAILED");
+        assertThat(json.readTree((String) row.get("policy_decision"))).isEqualTo(json.readTree("""
+                        {"approved": false, "stage": "VERIFICATION", "violations": [{"violationId": "v1",
+                         "approved": true, "rejectionReason": null, "verification": {"passed": false,
+                         "code": "VALUE_MISMATCH",
+                         "detail": "The proposed value is not the original without its outer spaces"}}]}
+                        """));
+        assertThat(count("correction_log")).isZero();
+    }
+
+    @Test
+    void ac_10_4_aFailedCorrectionLogInsertRollsBackTheSalesOfTheWholeChunk() {
+        // PostgreSQL rejects U+0000 in text, and nothing before correction_log filters it out of the explanation.
+        ProcessedRecord nul = processByAi(corrected(2), "before\u0000after");
+        assertThat(nul).isInstanceOf(ProcessedRecord.Loaded.class);
+
+        assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> {
+                    try {
+                        writer.write(new Chunk<>(
+                                process(schema, new RawRecord.Parsed(1, RecordTestSupport.validRow())), nul));
+                    } catch (Exception e) {
+                        throw e instanceof RuntimeException runtime ? runtime : new IllegalStateException(e);
+                    }
+                }))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("correction_log");
+        assertThat(count("sales_transaction")).isZero();
+        assertThat(count("correction_log")).isZero();
+        assertThat(count("quarantine_record")).isZero();
+    }
+
+    @Test
+    void ac_04_4_aRepeatedCorrectedRecordLeavesOneSaleAndOneSetOfCorrections() throws Exception {
+        Map<String, String> twoFields = RecordTestSupport.validRow();
+        twoFields.put("Country", "  United Kingdom ");
+        twoFields.put("Invoice", " 536365");
+        ProcessedRecord record = processByAi(new RawRecord.Parsed(2, twoFields), "Outer spaces");
+
+        write(record, record);
+
+        assertThat(rowNumbers("sales_transaction")).containsExactly(2);
+        assertThat(jdbc.sql("SELECT field_name FROM correction_log WHERE batch_id = :id ORDER BY 1")
+                        .param("id", batchId)
+                        .query(String.class)
+                        .list())
+                .containsExactly("country", "invoice_no");
+    }
+
+    private static RawRecord corrected(int sourceRowNumber) {
+        Map<String, String> raw = RecordTestSupport.validRow();
+        raw.put("Country", "  United Kingdom ");
+        return new RawRecord.Parsed(sourceRowNumber, raw);
+    }
+
+    /** Through the real applier, with an AUTO_FIXABLE answer that proposes TRIM for every violation. */
+    private ProcessedRecord processByAi(RawRecord record, String explanation) {
+        AiTriagePort strip = RecordTestSupport.autoFixable(explanation, RecordTestSupport.STRIP);
+        return RecordTestSupport.processor(batchId, schema, request -> {
+                    lastRequestId = request.requestId();
+                    return strip.triage(request);
+                })
+                .process(record);
     }
 
     private ProcessedRecord process(SchemaDefinition schema, RawRecord record) {

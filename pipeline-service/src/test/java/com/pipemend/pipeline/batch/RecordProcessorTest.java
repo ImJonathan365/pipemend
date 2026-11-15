@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
+import com.pipemend.pipeline.policy.PolicyDecision;
+import com.pipemend.pipeline.policy.RejectionReason;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
@@ -13,6 +15,7 @@ import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageResponseValidator;
 import com.pipemend.pipeline.triage.contract.Classification;
+import com.pipemend.pipeline.triage.contract.Operation;
 import com.pipemend.pipeline.triage.contract.Severity;
 import com.pipemend.pipeline.triage.contract.TriageJson;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
@@ -203,11 +206,8 @@ class RecordProcessorTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-        "triage-response.auto-fixable.json, AUTO_FIXABLE, LOW",
-        "triage-response.needs-human-review.json, NEEDS_HUMAN_REVIEW, HIGH"
-    })
-    void docs02Section5_everyValidAnalysisIsReviewedByAHumanUntilThePolicyExists(
+    @CsvSource({"triage-response.needs-human-review.json, NEEDS_HUMAN_REVIEW, HIGH"})
+    void docs02Section5_aNeedsHumanReviewAnswerIsReviewedByAHuman(
             String fixture, Classification decision, Severity maxSeverity) throws IOException {
         String body = Files.readString(Path.of("..", "contracts", "fixtures", fixture));
         TriageResponse response = TriageJson.parse(body);
@@ -221,6 +221,92 @@ class RecordProcessorTest {
         assertThat(q.summary()).isEqualTo(response.summary());
         assertThat(q.analysis()).isEqualTo(new ProcessedRecord.AiAnalysis(body, maxSeverity));
         assertThat(q.aiRequestId()).isNotNull();
+        assertThat(q.policyDecision()).isNull();
+    }
+
+    @Test
+    void ac_10_3_aVerifiedAndRevalidatedRecordIsLoadedAutoCorrectedWithItsCorrections() {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put("Country", "  United Kingdom ");
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort strip = RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP);
+
+        ProcessedRecord result = processor(SchemaTestSupport.realSchema(), request -> {
+                    sent.add(request);
+                    return strip.triage(request);
+                })
+                .process(new RawRecord.Parsed(4, row));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Loaded.class, loaded -> {
+            assertThat(loaded.transaction().loadOrigin()).isEqualTo(LoadOrigin.AUTO_CORRECTED);
+            assertThat(loaded.transaction().sourceRowNumber()).isEqualTo(4);
+            assertThat(loaded.transaction().country()).isEqualTo("United Kingdom");
+            assertThat(loaded.corrections()).singleElement().satisfies(c -> {
+                assertThat(c.fieldName()).isEqualTo("country");
+                assertThat(c.operation()).isEqualTo(Operation.TRIM);
+                assertThat(c.originalValue()).isEqualTo("  United Kingdom ");
+                assertThat(c.correctedValue()).isEqualTo("United Kingdom");
+                assertThat(c.aiRequestId()).isEqualTo(sent.getFirst().requestId());
+            });
+        });
+    }
+
+    static Stream<Arguments> rejectedByTheApplier() {
+        return Stream.of(
+                arguments("Quantity", "6 units", QuarantineReason.POLICY_REJECTED, PolicyDecision.Stage.POLICY, false),
+                arguments(
+                        "Country",
+                        "Atlantis",
+                        QuarantineReason.VERIFICATION_FAILED,
+                        PolicyDecision.Stage.VERIFICATION,
+                        false),
+                arguments(
+                        "Country",
+                        " Atlantis ",
+                        QuarantineReason.REVALIDATION_FAILED,
+                        PolicyDecision.Stage.VERIFICATION,
+                        true));
+    }
+
+    @ParameterizedTest
+    @MethodSource("rejectedByTheApplier")
+    void docs04Section4_aRejectedRecordIsQuarantinedWithItsDecisionAndNeverLoaded(
+            String header, String value, QuarantineReason reason, PolicyDecision.Stage stage, boolean approved) {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put(header, value);
+
+        ProcessedRecord result = processor(
+                        SchemaTestSupport.realSchema(),
+                        RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP))
+                .process(new RawRecord.Parsed(5, row));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(reason);
+            assertThat(q.rawPayload()).isEqualTo(row);
+            assertThat(q.policyDecision()).isNotNull();
+            assertThat(q.policyDecision().stage()).isEqualTo(stage);
+            assertThat(q.policyDecision().approved()).isEqualTo(approved);
+            // D167: there was a valid analysis, so the summary is the AI's and the analysis is kept.
+            assertThat(q.summary()).isEqualTo("summary of the AI");
+            assertThat(q.analysis()).isNotNull();
+            assertThat(q.analysis().maxSeverity()).isEqualTo(Severity.LOW);
+            assertThat(q.aiRequestId()).isNotNull();
+        });
+    }
+
+    @Test
+    void docs04Section4_anAutoFixableMalformedRowIsRejectedByThePolicy() {
+        ProcessedRecord result = processor(
+                        SchemaTestSupport.realSchema(),
+                        RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP))
+                .process(new RawRecord.Malformed(7, "a,b", "Expected 8 columns, found 2", 8, 2));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(QuarantineReason.POLICY_REJECTED);
+            assertThat(q.policyDecision().violations())
+                    .extracting(PolicyDecision.ViolationDecision::rejectionReason)
+                    .containsExactly(RejectionReason.ERROR_CODE_NOT_CORRECTABLE);
+        });
     }
 
     @Test
