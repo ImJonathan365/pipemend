@@ -89,7 +89,7 @@ public final class CorrectionApplier {
             TriageRequest.Violation violation = sent.get(i);
             TriageResponse.Analysis analysis = received.analyses().get(i);
             TriageResponse.Correction correction = Objects.requireNonNull(analysis.correction());
-            // The value of the record itself, never what the AI echoed back (D152).
+            // The value of the record itself, never what the AI echoed back (D165).
             VerificationResult result = verifiers
                     .forOperation(correction.operation())
                     .verify(new VerificationInput(

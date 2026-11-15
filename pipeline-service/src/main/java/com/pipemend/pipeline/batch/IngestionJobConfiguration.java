@@ -1,10 +1,14 @@
 package com.pipemend.pipeline.batch;
 
 import com.pipemend.pipeline.persistence.AiCallLogRepository;
+import com.pipemend.pipeline.persistence.CorrectionLogWriter;
 import com.pipemend.pipeline.persistence.IngestionBatchRepository;
 import com.pipemend.pipeline.persistence.ProcessedRecordWriter;
 import com.pipemend.pipeline.persistence.QuarantineWriter;
 import com.pipemend.pipeline.persistence.SalesTransactionWriter;
+import com.pipemend.pipeline.policy.CorrectionApplier;
+import com.pipemend.pipeline.policy.CorrectionPolicy;
+import com.pipemend.pipeline.policy.PolicyProperties;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiClientProperties;
@@ -12,6 +16,8 @@ import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.HttpAiTriageClient;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
+import com.pipemend.pipeline.verifiers.CountryAliases;
+import com.pipemend.pipeline.verifiers.Verifiers;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.springframework.batch.core.ExitStatus;
@@ -180,6 +186,7 @@ public class IngestionJobConfiguration {
             Validator validator,
             IngestionBatchRepository batches,
             AiTriagePort triage,
+            CorrectionApplier applier,
             @Value("#{jobParameters['batchId']}") String batchId) {
         UUID id = UUID.fromString(batchId);
         IngestionBatchRepository.BatchSource source = batches.source(id);
@@ -189,7 +196,16 @@ public class IngestionJobConfiguration {
                 validator,
                 new SalesTransactionTransformer(schema),
                 new TriageRequestBuilder(id, schema, source.filename(), source.type()),
-                triage);
+                triage,
+                applier);
+    }
+
+    /** Stateless, so one for every batch (D174). The validator is the same one that found the violations (AC-10.2). */
+    @Bean
+    CorrectionApplier correctionApplier(
+            PolicyProperties policy, SchemaDefinition schema, CountryAliases aliases, Validator validator) {
+        return new CorrectionApplier(
+                new CorrectionPolicy(policy), Verifiers.of(schema, aliases, policy.enumMinConfidence()), validator);
     }
 
     @Bean
@@ -200,6 +216,8 @@ public class IngestionJobConfiguration {
     @Bean
     ProcessedRecordWriter processedRecordWriter(DataSource dataSource, JsonMapper json) {
         return new ProcessedRecordWriter(
-                new SalesTransactionWriter(dataSource), new QuarantineWriter(dataSource, json));
+                new SalesTransactionWriter(dataSource),
+                new CorrectionLogWriter(dataSource, json),
+                new QuarantineWriter(dataSource, json));
     }
 }

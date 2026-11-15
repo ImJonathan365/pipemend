@@ -16,6 +16,7 @@ import com.pipemend.pipeline.persistence.AiCallLogRepository;
 import com.pipemend.pipeline.triage.AiClientProperties;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.HttpAiTriageClient;
+import com.pipemend.pipeline.validation.Whitespace;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -49,9 +50,9 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * The job with the real client, the real validator and a real PostgreSQL, against WireMock on 127.0.0.1. WireMock
- * answers every request with a valid AUTO_FIXABLE analysis of its own violations: without a CorrectionPolicy, none of
- * them may reach sales_transaction (docs/07 l.94, fail closed).
+ * The job with the real client, validator, policy, verifiers and a real PostgreSQL, against WireMock on 127.0.0.1.
+ * WireMock answers every request with a valid AUTO_FIXABLE analysis of its own violations; only a proposal that the
+ * policy, the verifier and revalidation accept reaches sales_transaction (docs/04 section 4, fail closed).
  */
 @SpringBootTest
 @Import({PostgresTestConfiguration.class, IngestionJobTriageTest.WireMockClient.class})
@@ -60,6 +61,8 @@ class IngestionJobTriageTest {
     private static final Path SAMPLES = Path.of("..", "data", "samples");
     private static final String HEADER =
             "Invoice,StockCode,Description,Quantity,InvoiceDate,Price,Customer ID,Country\n";
+    private static final String VALID =
+            "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,United Kingdom\n";
     private static final String UNKNOWN_COUNTRY =
             "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,Atlantis\n";
 
@@ -85,6 +88,14 @@ class IngestionJobTriageTest {
 
     private static volatile Mutation mutation = Mutation.NONE;
 
+    /** What the answer proposes: "echo", which no verifier accepts, or the received value without its outer spaces. */
+    enum Proposal {
+        ECHO,
+        STRIP
+    }
+
+    private static volatile Proposal proposal = Proposal.ECHO;
+
     @Autowired
     JobOperator jobOperator;
 
@@ -103,6 +114,7 @@ class IngestionJobTriageTest {
     @AfterEach
     void noMutation() {
         mutation = Mutation.NONE;
+        proposal = Proposal.ECHO;
     }
 
     @AfterAll
@@ -111,7 +123,7 @@ class IngestionJobTriageTest {
     }
 
     @Test
-    void docs07_everyAutoFixableRecordIsQuarantinedForReviewUntilThePolicyExists() throws Exception {
+    void docs07_anAutoFixableAnswerThatDoesNotVerifyNeverLoads() throws Exception {
         UUID batchId = receive(Files.readAllBytes(SAMPLES.resolve("dirty-1k.csv")));
 
         assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -124,8 +136,8 @@ class IngestionJobTriageTest {
         assertThat(count(
                         "quarantine_record",
                         batchId,
-                        "quarantine_reason = 'AI_REVIEW_REQUIRED' AND ai_analysis IS NOT NULL AND max_severity = 'LOW'"
-                                + " AND policy_decision IS NULL"))
+                        "quarantine_reason IN ('POLICY_REJECTED', 'VERIFICATION_FAILED') AND ai_analysis IS NOT NULL"
+                                + " AND max_severity = 'LOW' AND policy_decision IS NOT NULL"))
                 .isEqualTo(50);
         assertThat(jdbc.sql("""
                                 SELECT count(*) FROM quarantine_record q JOIN ai_call_log a
@@ -199,10 +211,122 @@ class IngestionJobTriageTest {
         assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
 
         assertThat(quarantined(batchId))
-                .containsEntry("quarantine_reason", "AI_REVIEW_REQUIRED")
+                .containsEntry("quarantine_reason", "VERIFICATION_FAILED")
                 .containsEntry("max_severity", "LOW");
         assertThat((String) quarantined(batchId).get("summary")).contains("\u0001");
         assertThat(count("ai_call_log", batchId, "outcome = 'SUCCESS'")).isEqualTo(1);
+    }
+
+    @Test
+    void ac_10_3_nfr_06_aCorrectedRecordIsLoadedWithOneCorrectionPerFieldAndTheBatchCountsIt() throws Exception {
+        proposal = Proposal.STRIP;
+        // Written by hand from the rules of docs/02 sections 3 and 4, one row per outcome.
+        String csv = HEADER
+                + VALID
+                + "\" 536365\",85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,"
+                + "\"  United Kingdom \"\n"
+                + UNKNOWN_COUNTRY
+                + "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,\" Atlantis \"\n"
+                + "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6 units,2010-12-01 08:26:00,2.55,17850,"
+                + "United Kingdom\n";
+        UUID batchId = receive(csv.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        // The pending item of the applier branch: complete() and the NFR-06 invariant count AUTO_CORRECTED rows.
+        assertThat(jdbc.sql("""
+                                SELECT status, failure_reason, read_count, direct_count, auto_corrected_count,
+                                    quarantined_count, ai_calls_count
+                                FROM ingestion_batch WHERE id = :id
+                                """).param("id", batchId).query().singleRow())
+                .containsEntry("status", "COMPLETED")
+                .containsEntry("failure_reason", null)
+                .containsEntry("read_count", 5)
+                .containsEntry("direct_count", 1)
+                .containsEntry("auto_corrected_count", 1)
+                .containsEntry("quarantined_count", 3)
+                .containsEntry("ai_calls_count", 4);
+        assertThat(jdbc.sql("""
+                                SELECT source_row_number, load_origin, invoice_no, country FROM sales_transaction
+                                WHERE batch_id = :id ORDER BY source_row_number
+                                """).param("id", batchId).query().listOfRows())
+                .containsExactly(
+                        Map.of(
+                                "source_row_number", 1,
+                                "load_origin", "DIRECT",
+                                "invoice_no", "536365",
+                                "country", "United Kingdom"),
+                        Map.of(
+                                "source_row_number", 2,
+                                "load_origin", "AUTO_CORRECTED",
+                                "invoice_no", "536365",
+                                "country", "United Kingdom"));
+        assertThat(jdbc.sql("""
+                                SELECT source_row_number, quarantine_reason, policy_decision ->> 'stage' AS stage,
+                                    (policy_decision ->> 'approved')::boolean AS approved
+                                FROM quarantine_record WHERE batch_id = :id ORDER BY source_row_number
+                                """).param("id", batchId).query().listOfRows())
+                .containsExactly(
+                        Map.of(
+                                "source_row_number",
+                                3,
+                                "quarantine_reason",
+                                "VERIFICATION_FAILED",
+                                "stage",
+                                "VERIFICATION",
+                                "approved",
+                                false),
+                        Map.of(
+                                "source_row_number",
+                                4,
+                                "quarantine_reason",
+                                "REVALIDATION_FAILED",
+                                "stage",
+                                "VERIFICATION",
+                                "approved",
+                                true),
+                        Map.of(
+                                "source_row_number",
+                                5,
+                                "quarantine_reason",
+                                "POLICY_REJECTED",
+                                "stage",
+                                "POLICY",
+                                "approved",
+                                false));
+    }
+
+    @Test
+    void ac_10_3_everyCorrectionBelongsToAnAutoCorrectedRowAndToItsCallToTheAi() throws Exception {
+        proposal = Proposal.STRIP;
+        String csv = HEADER
+                + VALID
+                + "\" 536365\",85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,"
+                + "\"  United Kingdom \"\n"
+                + UNKNOWN_COUNTRY;
+        UUID batchId = receive(csv.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        // Exactly one row per corrected field, and none for a DIRECT row.
+        assertThat(jdbc.sql("""
+                                SELECT c.source_row_number, c.field_name FROM correction_log c
+                                JOIN sales_transaction s
+                                    ON s.batch_id = c.batch_id AND s.source_row_number = c.source_row_number
+                                WHERE c.batch_id = :id AND s.load_origin = 'AUTO_CORRECTED'
+                                ORDER BY 1, 2
+                                """).param("id", batchId).query().listOfRows())
+                .containsExactly(
+                        Map.of("source_row_number", 2, "field_name", "country"),
+                        Map.of("source_row_number", 2, "field_name", "invoice_no"));
+        assertThat(count("correction_log", batchId, "true")).isEqualTo(2);
+        assertThat(jdbc.sql("""
+                                SELECT count(*) FROM correction_log c JOIN ai_call_log a
+                                    ON a.request_id = c.ai_request_id AND a.batch_id = c.batch_id
+                                    AND a.source_row_number = c.source_row_number AND a.outcome = 'SUCCESS'
+                                WHERE c.batch_id = :id
+                                """).param("id", batchId).query(Integer.class).single())
+                .isEqualTo(2);
     }
 
     /**
@@ -253,7 +377,12 @@ class IngestionJobTriageTest {
                 ObjectNode correction = analysis.putObject("correction");
                 correction.put("operation", "TRIM");
                 correction.set("originalValue", violation.get("receivedValue"));
-                correction.put("proposedValue", "echo");
+                correction.put(
+                        "proposedValue",
+                        proposal == Proposal.STRIP
+                                ? Whitespace.strip(
+                                        violation.get("receivedValue").asString())
+                                : "echo");
                 ObjectNode parameters = correction.putObject("parameters");
                 if (mutation == Mutation.UNPARSEABLE_NUMBER_IN_A_PARAMETER) {
                     parameters.put("n", "@number@");
