@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
@@ -120,7 +121,8 @@ public final class ParseDateVerifier implements Verifier {
             }
             converted.append(c);
         }
-        return DateTimeFormatter.ofPattern(converted.toString()).withResolverStyle(ResolverStyle.STRICT);
+        // Locale.ROOT: week-based letters such as Y, w and e depend on the locale, and the result must not (NFR-13).
+        return DateTimeFormatter.ofPattern(converted.toString(), Locale.ROOT).withResolverStyle(ResolverStyle.STRICT);
     }
 
     /** Missing seconds default to :00; a pattern without a full date or time does not parse. */

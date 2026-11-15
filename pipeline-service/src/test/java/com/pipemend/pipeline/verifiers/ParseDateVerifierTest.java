@@ -4,6 +4,8 @@ import static com.pipemend.pipeline.verifiers.VerifierTestSupport.input;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.pipemend.pipeline.triage.contract.Operation;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
@@ -101,6 +103,23 @@ class ParseDateVerifierTest {
                                 Map.of("sourcePattern", 5)))
                         .code())
                 .isEqualTo(VerificationCode.INVALID_PARAMETERS);
+    }
+
+    /** Week-based letters depend on the locale; the verifier always parses with Locale.ROOT (NFR-13). */
+    @Test
+    void theResultDoesNotDependOnTheDefaultLocale() {
+        Locale before = Locale.getDefault();
+        try {
+            for (Locale locale : List.of(Locale.ROOT, Locale.US, Locale.FRANCE, Locale.forLanguageTag("ar-EG"))) {
+                Locale.setDefault(locale);
+
+                assertThat(verify("2010-02-1 08:26", "YYYY-ww-e HH:mm", "2010-01-03 08:26:00"))
+                        .as("default locale %s", locale)
+                        .isEqualTo(VerificationResult.success());
+            }
+        } finally {
+            Locale.setDefault(before);
+        }
     }
 
     @Test
