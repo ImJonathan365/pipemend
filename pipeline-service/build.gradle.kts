@@ -48,6 +48,14 @@ tasks.withType<Test> {
     testLogging {
         events("passed", "skipped", "failed")
     }
+    // AC-20.3 runs against the ai-service image, so an ai-service change must rerun the tests instead of
+    // reusing an up-to-date result. The image itself is still rebuilt by hand (AGENTS.md).
+    inputs.files(
+        fileTree("../ai-service/app") { exclude("**/__pycache__/**") },
+        "../ai-service/Dockerfile",
+        "../ai-service/pyproject.toml",
+        "../ai-service/uv.lock",
+    ).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("aiServiceSources")
 }
 
 spotless {
