@@ -1467,3 +1467,67 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `AMBIGUOUS_DATE`, porque `yyyy/dd/MM` da el 12 de marzo. | Reversible: sí.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `verifiers/**` (`ParseDateVerifier` y
   `ParseNumberVerifier`, nuevos; `CountryAliases`) y `docs/CHANGELOG.md`.
+
+## Sprint 4 — Plan de ramas (actualizado el 2026-11-13)
+- El owner aprobó el plan del Sprint 4 en ocho ramas (2026-11-12). Al planear la rama del aplicador, el diseño completo
+  pasaba de 400 líneas sin tests (~396, ~495 con margen), así que el owner aprobó partirla en dos. El sprint queda en
+  **nueve ramas**, en este orden:
+  1. `feat/FR-09-correction-policy` (fusionada, #47);
+  2. `feat/FR-10-text-verifiers` (fusionada, #48);
+  3. `feat/FR-10-parse-verifiers` (fusionada, #49);
+  4. `feat/FR-10-correction-applier` (esta): aplicador puro, sin cablear;
+  5. `feat/FR-10-auto-correction-load` (nueva): cableado; la primera rama que carga `AUTO_CORRECTED`;
+  6. `test/FR-20-ac-20-3`;
+  7. `test/FR-10-adversarial-suite`;
+  8. `feat/FR-12-resilience`;
+  9. `feat/FR-08-ai-budget`.
+- La estimación del sprint (24–32 h reales) no cambia: el trabajo es el mismo, repartido en una rama más.
+
+## Sprint 4 — `CorrectionApplier` (2026-11-13)
+- Hecho: los pasos 3 a 5 de `04` §4 (l.136-145) en un componente puro, sin cablear al job. Son la política, todos los
+  verificadores y la revalidación del registro corregido con el mismo `Validator` (AC-10.2).
+  - Cubre AC-09.2 (todo o nada), AC-10.1, AC-10.2 y AC-10.3 en el aplicador, y la forma de `policy_decision` de AC-09.3
+    y AC-10.5 (`05` §5).
+  - `CorrectionApplier.Corrected` es el único camino a una fila `AUTO_CORRECTED`. Su constructor es privado, y solo se
+    construye en la última línea de `apply`, tras los tres pasos. Un test lo comprueba por reflexión.
+  - `Verifiers` asigna un verificador a cada operación, y no se construye si falta alguna.
+- `AppliedCorrection` lleva todo lo que AC-10.3 y las columnas `NOT NULL` de `correction_log` (V2) exigen: `field_name`,
+  `error_code`, `operation`, `operation_params`, `original_value`, `corrected_value`, `confidence`, `severity`,
+  `ai_explanation`, `ai_provider`, `ai_model`, `prompt_version` y `ai_request_id`. Todo sale de la petición, la
+  respuesta validada y su `meta`; no queda nada para la rama siguiente. `id` y `applied_at` los pone la base de datos;
+  `batch_id` y `source_row_number`, el writer.
+- Pedido por el owner, sin frase propia: `ParseDateVerifier` construye los formatters con `Locale.ROOT`.
+  - **Medido antes del cambio:** con el patrón `YYYY-ww-e HH:mm`, la entrada `2010-02-1 08:26` daba el 3 de enero con
+    el locale por defecto `ROOT` o `en_US`, el 11 con `fr_FR` y el 2 con `ar_EG`.
+  - Un test fija esos cuatro locales por defecto y exige el mismo resultado (NFR-13, `02` l.73).
+- Decisión del owner (2026-11-13): "Apruebo partir la rama 4 en feat/FR-10-correction-applier y
+  feat/FR-10-auto-correction-load; en feat/FR-10-correction-applier, crear en policy/ CorrectionApplier,
+  PolicyDecision y AppliedCorrection y en verifiers/ la tabla Verifiers, con el orden de docs/04 l.133-145 y un único
+  punto de construcción del resultado corregido, sin cablear al job; usar Locale.ROOT en ParseDateVerifier; las
+  decisiones B a G como propone el plan; y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D165: el valor original que se verifica es el del campo del propio registro. Hoy coincide con el `receivedValue`
+    de la petición, pero dejará de hacerlo cuando `AI_REDACT_FIELDS` (Sprint 5) redacte `customer_id`. Precisa D152 con
+    el mismo criterio: el dato del pipeline, nunca el de la IA. | Reversible: sí | Aprobado por: owner.
+  - D166: se ejecutan todos los verificadores aunque uno falle, para que `policy_decision` lleve el resultado de cada
+    violación (AC-10.5). | Reversible: sí | Aprobado por: owner.
+  - D167: con `POLICY_REJECTED`, `VERIFICATION_FAILED` o `REVALIDATION_FAILED`, el `summary` es el de la IA, y se
+    guardan `ai_analysis` y `max_severity`, porque hubo análisis válido. AC-11.2 solo exige texto técnico en los motivos
+    `AI_*` y en `PROCESSING_ERROR`. Se aplica al cablear (rama 5). | Reversible: sí | Aprobado por: owner.
+  - D168: `confidence` se redondea con `HALF_UP` a 3 decimales en el aplicador, para la columna `numeric(4,3)`, en vez
+    de dejar que redondee PostgreSQL (NFR-13). | Reversible: sí | Aprobado por: owner.
+  - D169: el writer de `correction_log` (rama 5) no usará `ON CONFLICT`; un conflicto hará fallar el chunk (`09`
+    §2.2). | Reversible: sí | Aprobado por: owner.
+  - D170: forma de `policy_decision`, según el ejemplo de `05` §5:
+    - `POLICY_REJECTED`: `approved: false`, `stage: POLICY`, y `verification` en `null` en cada violación;
+    - `VERIFICATION_FAILED`: `approved: false`, `stage: VERIFICATION`, y cada violación con `approved: true` y su
+      verificación;
+    - `REVALIDATION_FAILED`: `approved: true`, `stage: VERIFICATION`, y todas las verificaciones aprobadas.
+
+    | Reversible: sí | Aprobado por: owner.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `policy/**` (`CorrectionApplier`,
+  `PolicyDecision`, `AppliedCorrection`, nuevos), 🟠 `verifiers/**` (`Verifiers`, nuevo; `ParseDateVerifier`) y
+  `docs/CHANGELOG.md`.
+- Pendiente para la rama `feat/FR-10-auto-correction-load`, por indicación del owner: comprobar que `complete()`
+  calcula `auto_corrected_count` y que el invariante de NFR-06 cuenta las filas `AUTO_CORRECTED`, con un test de job.
+  Si no, el primer lote con correcciones acabaría en `INVARIANT_VIOLATION`.
