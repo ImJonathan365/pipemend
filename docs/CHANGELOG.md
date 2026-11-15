@@ -940,8 +940,8 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     esa rama con dos correcciones: la spec declara todos los códigos de `06` A.5, también 429 y 504, y
     la fila 500 lleva todas sus columnas, alineada con NFR-07.
   - Sprint 4: riesgo de NFR-13. La caché de `ai-service` sobrevive a una base limpia si no se reinicia
-    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Sin
-    resolver.
+    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Resuelto
+    el 2026-11-15 con D184: "base limpia" es el stack entero (`down -v`), nota en `03` NFR-13.
   - Sprint 5: cumplir `09` §7.11 con `triage_v1.md` antes de añadir un proveedor real; contar
     `llmCalls` reales; plazo total, `asyncio.timeout`, tope diario, reparación y mapeo de errores.
 
@@ -1594,3 +1594,48 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `policy/CorrectionApplier.java` (solo el
   comentario D152 → D165) y 🟠 `docs/CHANGELOG.md`. Arreglo menor en la entrada anterior: se quita "sin frase propia" de
   la línea de `Locale.ROOT`, porque la frase del owner lo incluía.
+## Sprint 4 — Test de AC-20.3 con el mock (2026-11-15)
+- Rama `test/FR-20-ac-20-3`, la sexta del plan. `Ac203MockEvaluationTest` ejecuta el job real sobre `dirty-1k` contra
+  el `ai-service` real con `LLM_PROVIDER=mock` (Testcontainers) y lo compara con `dirty-1k.labels.csv`: es la única
+  comparación autorizada entre el mock y las etiquetas (`02` l.377). No hay código de producción.
+  - La CI construye la imagen `pipemend/ai-service:test` antes de `./gradlew test`, en el job `pipeline-service`. El
+    test nunca la descarga y falla si falta; el comando local está en AGENTS.md y en el README.
+  - Nota de NFR-13 en `03`: "base limpia" es el stack entero (`docker compose down -v`); las filas se comparan sin ids
+    generados, timestamps ni latencias, y sin excluir el resultado de la caché.
+- Primera ejecución, roja por un error del test: `outcome()` añadía el motivo de cuarentena al resultado y las 20 filas
+  en cuarentena no coincidían con `QUARANTINED`. No había ninguna discrepancia con las etiquetas. El owner aprobó
+  corregirlo: "Apruebo corregir outcome() en Ac203MockEvaluationTest para que compare solo el resultado y deje el
+  motivo de cuarentena en el mensaje." También pidió que el test marque las filas cuyas entradas no coinciden en
+  `expected_outcome` (`10` §3). La segunda ejecución sale verde.
+- Medido: el test tarda ~2,3 s (JUnit); `docker build` sin caché de capas, ~48 s con las imágenes base ya descargadas.
+- Decisión del owner (2026-11-15): "Apruebo test/FR-20-ac-20-3: el test Ac203MockEvaluationTest con el contenedor de
+  ai-service pipemend/ai-service:test arrancado por Testcontainers solo con LLM_PROVIDER=mock, sin descargar imágenes
+  y fallando si falta la imagen; el paso docker build en ci.yml antes de Test sin quitar ningún paso; el comando local
+  en AGENTS.md y en el README; la nota de NFR-13 en docs/03; las entradas de ai-service en la tarea test de
+  build.gradle.kts; las decisiones D177 a D184 como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D177: la imagen usa el tag fijo `pipemend/ai-service:test`, el mismo en el test y en `ci.yml`.
+    | Reversible: sí | Aprobado por: owner.
+  - D178: el test comprueba exactamente AC-20.3: el resultado de las 1000 filas (sin etiqueta → `DIRECT`); en cada
+    fila `AUTO_CORRECTED`, los campos corregidos son los etiquetados y cada `corrected_value` es igual a `clean_value`
+    (`""` es `null` solo con `NULLIFY_TOKEN`, `10` l.60); ninguna otra fila tiene `correction_log`. No comprueba
+    `quarantine_reason` ni `expected_operation`, que AC-20.3 no pide. | Reversible: sí | Aprobado por: owner.
+  - D179: el test reúne todas las discrepancias y falla una sola vez con la lista completa. | Reversible: sí
+    | Aprobado por: owner.
+  - D180: si sale rojo, se para y se informa. Una corrección exige una regla de `/docs` citada y un test rojo escrito
+    antes, en una rama `fix/` que se fusiona antes; nunca se ajustan el test, el mock, las etiquetas ni `dirty-1k` a la
+    salida. | Reversible: no aplica | Aprobado por: owner.
+  - D181: la tarea `test` de Gradle declara como entradas `ai-service/app` (sin `__pycache__`), `Dockerfile`,
+    `pyproject.toml` y `uv.lock`, para que un cambio en `ai-service` repita los tests en local. La imagen se
+    reconstruye a mano. | Reversible: sí | Aprobado por: owner.
+  - D182: el test va en la tarea `test` normal, sin tag: nunca se omite, así que `./gradlew test` necesita la imagen.
+    | Reversible: sí | Aprobado por: owner.
+  - D183: los auxiliares `receive` y `launch` se duplican en el test nuevo para no tocar ningún test existente.
+    | Reversible: sí | Aprobado por: owner.
+  - D184: NFR-13 se comprueba a mano (dos ejecuciones separadas por `down -v`), sin test automático.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `.github/workflows/ci.yml` (un paso nuevo,
+  ninguno quitado), 🟠 `AGENTS.md`, 🟠 `docs/03-requisitos-no-funcionales.md` y 🟠 `docs/CHANGELOG.md` (incluido el
+  riesgo de NFR-13 del Sprint 3, marcado como resuelto). No protegidos: 🟢 `README.md` y 🟢 `build.gradle.kts` (sin
+  cambio de versiones, `09` l.71).

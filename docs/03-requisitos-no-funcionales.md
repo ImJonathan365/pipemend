@@ -160,6 +160,9 @@ Qué cuenta como falla para el circuit breaker: fallas de transporte, *read time
 ### NFR-13 — Determinismo (Should)
 
 - Con `mock`, dos ejecuciones del mismo archivo en bases limpias producen resultados idénticos (mismas filas en cada tabla).
+  - **"Base limpia"** significa el stack entero desde cero (`docker compose down -v`), no solo PostgreSQL: así tampoco sobrevive la caché en memoria de `ai-service`.
+  - Las filas se comparan **sin** ids generados, timestamps ni latencias. El resultado de la caché (`cacheHit`, `outcome = CACHE_HIT`) **no** se excluye: con el stack desde cero también debe coincidir.
+  - Comprobación manual: dos ejecuciones del mismo archivo separadas por `docker compose down -v`. AC-20.3 (`02`) la complementa en CI sobre `dirty-1k`.
 - Con LLM real se usa `temperature = 0`; la variabilidad residual se documenta en el reporte de evaluación.
 
 ### NFR-14 — Seguridad (Must, alcance de portafolio)
