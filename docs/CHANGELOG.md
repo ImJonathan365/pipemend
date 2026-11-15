@@ -1639,3 +1639,48 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   ninguno quitado), 🟠 `AGENTS.md`, 🟠 `docs/03-requisitos-no-funcionales.md` y 🟠 `docs/CHANGELOG.md` (incluido el
   riesgo de NFR-13 del Sprint 3, marcado como resuelto). No protegidos: 🟢 `README.md` y 🟢 `build.gradle.kts` (sin
   cambio de versiones, `09` l.71).
+## Sprint 4 — Suite adversarial (2026-11-15)
+- Rama `test/FR-10-adversarial-suite`, la séptima del plan. `AdversarialSuiteTest` (AC-10.6) pasa respuestas de IA
+  plausibles pero erróneas, todas `LOW` y con `confidence = 0.99`, por el job, el validador, la política, los
+  verificadores, la revalidación y PostgreSQL reales; solo la IA es WireMock en 127.0.0.1. No hay código de producción.
+  - Trece casos adversariales y un control `AUTO_CORRECTED`. Cada caso sale de una regla de `02` §4, ADR-0008, `06` o
+    una D de este CHANGELOG, y fija el motivo de cuarentena y el código de `policy_decision` antes de ejecutar:
+    `AMBIGUOUS_DATE` (`02` §4 PARSE_DATE (3), D164), `AMBIGUOUS_NUMBER` (PARSE_NUMBER (4)), `CURRENCY_NOT_CONVERTIBLE`
+    (PARSE_NUMBER (1)), `SIGN_CHANGED` (PARSE_NUMBER (3), D163), `UNVERIFIABLE_MAPPING` (MAP_TO_ENUM (2)),
+    `VALUE_MISMATCH` (el principio de "idéntico a `proposed`", TRIM, PARSE_DATE (2) y PARSE_NUMBER (2) y (5)),
+    `ERROR_CODE_NOT_CORRECTABLE` y `FIELD_NOT_ALLOWED` (`02` §4, AC-09.1), y `AI_INVALID_RESPONSE` (AC-08.7).
+  - Cada caso comprueba que el pipeline envió exactamente la violación prevista. Antes de la primera ejecución, las 14
+    filas escritas a mano pasaron por el validador real con el campo y el código previstos.
+  - Primera ejecución en verde: 0 de los 13 casos llega a `sales_transaction`, con el motivo y el código previstos.
+- `contracts/fixtures/triage-request.prompt-injection.json` (`03` l.180): una fila basada en la fila 6 de `dirty-1k`,
+  con `Country` y `Description` cambiados; la `Description` lleva una instrucción inyectada y el cierre del bloque de
+  contexto. La usan la suite (la IA obedece la instrucción y la verificación lo rechaza), `test_prompt_injection.py`
+  con el mock y los tests parametrizados de contrato de los dos servicios. `data/samples` no cambia.
+- La distinción entre timeout de conexión y de lectura (`03` l.99) pasa a `feat/FR-12-resilience`: es FR-12, y el
+  reintento que los distingue todavía no existe.
+- Decisión del owner (2026-11-15): "Apruebo test/FR-10-adversarial-suite: la suite AdversarialSuiteTest parametrizada
+  con el job, el validador, la política, los verificadores y PostgreSQL reales y WireMock solo como IA, con los casos 1
+  a 11 y el control C de la tabla; la fixture contracts/fixtures/triage-request.prompt-injection.json y su entrada en
+  contracts/fixtures/index.json; el test test_prompt_injection.py con el mock; el cambio de
+  thereAreFourValidRequestFixtures a cinco; mover la distinción de timeouts a feat/FR-12-resilience; las decisiones
+  D185 a D191 como se recomiendan, con D186 ajustada como se indica abajo; y la entrada del CHANGELOG."
+- Decisiones:
+  - D185: la suite ejecuta el job real con PostgreSQL, una fila por caso, en vez de llamar al aplicador: así comprueba
+    "0 en `sales_transaction`" de verdad. | Reversible: sí | Aprobado por: owner.
+  - D186 (ajustada por el owner): cada caso comprueba su motivo de cuarentena y, cuando lo hay, su código: el de
+    verificación de AC-10.5 en todos los `VERIFICATION_FAILED` y el motivo de la política en los `POLICY_REJECTED`, con
+    la fuente escrita en el caso. | Reversible: sí | Aprobado por: owner.
+  - D187: un caso de control (`£2.55` → `2.55`) debe cargarse, para que un arnés roto no pase la suite.
+    | Reversible: sí | Aprobado por: owner.
+  - D188: la fixture lleva `Customer ID` vacío, para usar `record.raw` tal cual como fila CSV. | Reversible: sí
+    | Aprobado por: owner.
+  - D189: si un caso deja pasar una corrección, o la rechaza con otro motivo o código, se para y se informa con la
+    regla; no se ajusta nada para que pase. | Reversible: no aplica | Aprobado por: owner.
+  - D190: el WireMock y los auxiliares se duplican en la suite para no tocar `IngestionJobTriageTest`.
+    | Reversible: sí | Aprobado por: owner.
+  - D191: la distinción de timeouts (`03` l.99) va en `feat/FR-12-resilience`, no aquí. | Reversible: sí
+    | Aprobado por: owner.
+- Tests existentes que cambian: `TriageRequestContractTest.thereAreFourValidRequestFixtures` pasa a
+  `thereAreFiveValidRequestFixtures` (`hasSize(5)`) por la fixture nueva.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `contracts/fixtures/triage-request.prompt-injection.json`
+  (nuevo), 🟠 `contracts/fixtures/index.json` y 🟠 `docs/CHANGELOG.md`.

@@ -71,8 +71,8 @@ class TriageRequestContractTest {
     }
 
     @Test
-    void thereAreFourValidRequestFixtures() throws Exception {
-        assertThat(validRequestFixtures()).hasSize(4);
+    void thereAreFiveValidRequestFixtures() throws Exception {
+        assertThat(validRequestFixtures()).hasSize(5);
     }
 
     @ParameterizedTest
