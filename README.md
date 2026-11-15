@@ -37,6 +37,17 @@ docker compose up --build
 No API key is required: the default provider is `mock`, which is deterministic and makes no outbound calls.
 `docker compose down -v` resets the system to a clean state.
 
+## Running the tests
+
+```bash
+docker build -t pipemend/ai-service:test ai-service
+cd pipeline-service && ./gradlew test
+```
+
+The pipeline tests need Docker. The AC-20.3 evaluation test runs the whole pipeline against the real
+`ai-service` with the `mock` provider on `dirty-1k`, so it needs that image and fails if it is missing;
+rebuild it after changing `ai-service`. The commands for `ai-service` and `tools` are in [AGENTS.md](AGENTS.md).
+
 ## Documentation
 
 The full design lives in [`docs/`](docs/README.md) (written in Spanish): requirements with acceptance

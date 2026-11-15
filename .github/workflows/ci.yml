@@ -41,6 +41,11 @@ jobs:
       - name: Lint (Spotless)
         run: ./gradlew spotlessCheck
 
+      # AC-20.3 runs the real ai-service with the mock provider from this image; the test never
+      # pulls it and fails when it is missing, so the image is built here, before the tests.
+      - name: Build ai-service test image
+        run: docker build -t pipemend/ai-service:test ../ai-service
+
       - name: Test
         run: ./gradlew test
 
