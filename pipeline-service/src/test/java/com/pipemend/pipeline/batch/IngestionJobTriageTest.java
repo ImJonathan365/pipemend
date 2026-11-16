@@ -96,6 +96,9 @@ class IngestionJobTriageTest {
 
     private static volatile Proposal proposal = Proposal.ECHO;
 
+    /** meta.cacheHit of every answer; AiBudgetTest turns it on. */
+    static volatile boolean cacheHit = false;
+
     @Autowired
     JobOperator jobOperator;
 
@@ -115,6 +118,7 @@ class IngestionJobTriageTest {
     void noMutation() {
         mutation = Mutation.NONE;
         proposal = Proposal.ECHO;
+        cacheHit = false;
     }
 
     @AfterAll
@@ -354,6 +358,10 @@ class IngestionJobTriageTest {
 
         @Override
         public Response transform(Response response, ServeEvent serveEvent) {
+            // Only a 200 is an analysis; any other status keeps the body of its stub.
+            if (response.getStatus() != 200) {
+                return response;
+            }
             JsonNode request = JSON.readTree(serveEvent.getRequest().getBodyAsString());
             ObjectNode answer = JSON.createObjectNode();
             answer.put("requestId", request.get("requestId").asString());
@@ -400,7 +408,7 @@ class IngestionJobTriageTest {
             meta.put("model", "echo");
             meta.put("promptVersion", "triage_v1");
             meta.put("latencyMs", 1);
-            meta.put("cacheHit", false);
+            meta.put("cacheHit", cacheHit);
             meta.putNull("inputTokens");
             meta.putNull("outputTokens");
             meta.put("llmCalls", 0);

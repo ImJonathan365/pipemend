@@ -37,6 +37,8 @@ pipemend:
     read-timeout: ${AI_CLIENT_READ_TIMEOUT_MS:30000}ms
     # Shared with ai-service; the pipeline does not start unless read-timeout exceeds it by 2 s (NFR-07).
     request-deadline: ${AI_REQUEST_DEADLINE_SECONDS:25}s
+    # AC-08.6: the logical calls without a cache hit that one batch may make; at least 1.
+    max-calls-per-batch: ${AI_MAX_CALLS_PER_BATCH:500}
   # FR-09. The defaults are those of docs/04 section 8 and docs/02 section 4, and change only with an ADR (AC-09.4).
   policy:
     min-confidence: ${AI_MIN_CONFIDENCE:0.85}

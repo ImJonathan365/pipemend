@@ -11,6 +11,8 @@ import com.pipemend.pipeline.policy.CorrectionPolicy;
 import com.pipemend.pipeline.policy.PolicyProperties;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
+import com.pipemend.pipeline.triage.AiBudget;
+import com.pipemend.pipeline.triage.AiBudgetProperties;
 import com.pipemend.pipeline.triage.AiClientProperties;
 import com.pipemend.pipeline.triage.AiResilience;
 import com.pipemend.pipeline.triage.AiTriagePort;
@@ -188,6 +190,8 @@ public class IngestionJobConfiguration {
             Validator validator,
             IngestionBatchRepository batches,
             AiTriagePort triage,
+            AiCallLogRepository callLog,
+            AiBudgetProperties budget,
             CorrectionApplier applier,
             @Value("#{jobParameters['batchId']}") String batchId) {
         UUID id = UUID.fromString(batchId);
@@ -199,6 +203,8 @@ public class IngestionJobConfiguration {
                 new SalesTransactionTransformer(schema),
                 new TriageRequestBuilder(id, schema, source.filename(), source.type()),
                 triage,
+                // One per step execution: nothing of a batch carries over to the next one (AC-08.6).
+                new AiBudget(() -> callLog.budgetExhausted(id, budget.maxCallsPerBatch())),
                 applier);
     }
 

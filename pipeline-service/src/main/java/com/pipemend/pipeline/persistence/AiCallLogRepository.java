@@ -17,6 +17,9 @@ public class AiCallLogRepository {
 
     static final int ERROR_DETAIL_MAX_BYTES = 4096;
 
+    /** AC-08.6: every logical call spends budget unless ai-service answered it from its cache, the failed ones too. */
+    public static final String SPENDS_BUDGET = "outcome <> 'CACHE_HIT'";
+
     /** The values of the outcome CHECK that this code emits; CIRCUIT_OPEN comes with the circuit breaker. */
     public enum Outcome {
         SUCCESS,
@@ -80,6 +83,22 @@ public class AiCallLogRepository {
                 .param("outputTokens", entry.outputTokens())
                 .param("errorDetail", truncateUtf8(storable(entry.errorDetail()), ERROR_DETAIL_MAX_BYTES))
                 .update());
+    }
+
+    /**
+     * AC-08.6: the batch has spent its calls, or ai-service answered 429 LLM_BUDGET_EXHAUSTED to one of them (docs/03
+     * l.102). Read from the table, so a restart also sees the calls of the execution that failed.
+     */
+    public boolean budgetExhausted(UUID batchId, int maxCalls) {
+        return jdbc.sql("""
+                        SELECT count(*) FILTER (WHERE %s) >= :max
+                            OR count(*) FILTER (WHERE http_status = 429 AND error_code = 'LLM_BUDGET_EXHAUSTED') > 0
+                        FROM ai_call_log WHERE batch_id = :id
+                        """.formatted(SPENDS_BUDGET))
+                .param("id", batchId)
+                .param("max", maxCalls)
+                .query(Boolean.class)
+                .single();
     }
 
     /** Never splits a code point, so the stored text is still valid UTF-8. */

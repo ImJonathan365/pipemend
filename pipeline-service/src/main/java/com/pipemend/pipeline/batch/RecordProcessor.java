@@ -7,6 +7,7 @@ import com.pipemend.pipeline.schema.FieldSpec;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
+import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
@@ -27,7 +28,7 @@ import org.springframework.batch.infrastructure.item.ItemProcessor;
 
 /**
  * Decides the outcome of one record (docs/04 section 4): valid records are transformed and loaded DIRECT; invalid ones
- * go through the triage port and, when every analysis is AUTO_FIXABLE, through the CorrectionApplier, which is the
+ * go through the AI budget and the triage port and, when every analysis is AUTO_FIXABLE, through the CorrectionApplier, which is the
  * only way to an AUTO_CORRECTED row. Everything else is quarantined. There is no skip policy: an unexpected exception
  * quarantines the record with PROCESSING_ERROR, so it is never lost (NFR-06).
  */
@@ -39,6 +40,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     private final SalesTransactionTransformer transformer;
     private final TriageRequestBuilder requests;
     private final AiTriagePort triage;
+    private final AiBudget budget;
     private final CorrectionApplier applier;
 
     public RecordProcessor(
@@ -48,6 +50,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
             SalesTransactionTransformer transformer,
             TriageRequestBuilder requests,
             AiTriagePort triage,
+            AiBudget budget,
             CorrectionApplier applier) {
         this.batchId = batchId;
         this.schema = schema;
@@ -55,6 +58,7 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
         this.transformer = transformer;
         this.requests = requests;
         this.triage = triage;
+        this.budget = budget;
         this.applier = applier;
     }
 
@@ -75,6 +79,15 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
                                 transformer.transform(batchId, parsed.sourceRowNumber(), fields, LoadOrigin.DIRECT));
                     }
                 }
+            }
+            // docs/04 section 4: checked before the call, so a spent budget leaves no ai_call_log row (AC-08.5).
+            if (budget.exhausted()) {
+                return technical(
+                        record,
+                        violations,
+                        QuarantineReason.AI_BUDGET_EXCEEDED,
+                        "The AI call budget of the batch is exhausted",
+                        null);
             }
             TriageRequest request = requests.build(UUID.randomUUID(), record, violations);
             aiRequestId = request.requestId();
@@ -156,7 +169,11 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
 
     /** AC-11.2: a summary written by the pipeline, without AI. */
     private ProcessedRecord.Quarantined technical(
-            RawRecord record, List<Violation> violations, QuarantineReason reason, String detail, UUID aiRequestId) {
+            RawRecord record,
+            List<Violation> violations,
+            QuarantineReason reason,
+            String detail,
+            @Nullable UUID aiRequestId) {
         return quarantine(record, violations, reason, detail + ". " + describe(violations), null, aiRequestId, null);
     }
 

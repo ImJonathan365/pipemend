@@ -11,6 +11,7 @@ import com.pipemend.pipeline.policy.RejectionReason;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
+import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageResponseValidator;
@@ -203,6 +204,68 @@ class RecordProcessorTest {
         assertThat(q.aiRequestId()).isEqualTo(sent.getFirst().requestId());
         // AC-11.2: the technical summary of the pipeline, never a text of the AI.
         assertThat(q.summary()).contains("1 violation(s)").contains("country INVALID_ENUM_VALUE");
+    }
+
+    static Stream<RawRecord> ac_08_6_aSpentBudgetQuarantinesWithoutCallingTheAi() {
+        return Stream.of(
+                new RawRecord.Parsed(6, unknownCountry()),
+                // docs/04 section 4: a malformed row reaches the budget check too.
+                new RawRecord.Malformed(7, "a,b", "Expected 8 columns, found 2", 8, 2));
+    }
+
+    @ParameterizedTest
+    @MethodSource
+    void ac_08_6_aSpentBudgetQuarantinesWithoutCallingTheAi(RawRecord record) {
+        AiTriagePort failIfCalled = request -> {
+            throw new AssertionError("a spent budget must not reach the AI");
+        };
+
+        ProcessedRecord result = RecordTestSupport.processor(
+                        BATCH, SchemaTestSupport.realSchema(), failIfCalled, new AiBudget(() -> true))
+                .process(record);
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(QuarantineReason.AI_BUDGET_EXCEEDED);
+            // AC-08.5: no call, so no ai_call_log row to point at.
+            assertThat(q.aiRequestId()).isNull();
+            assertThat(q.analysis()).isNull();
+            assertThat(q.summary()).startsWith("The AI call budget of the batch is exhausted. 1 violation(s): ");
+        });
+    }
+
+    @Test
+    void ac_08_6_withBudgetLeftTheAiIsCalled() {
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort capture = request -> {
+            sent.add(request);
+            return new TriageOutcome.Unavailable("captured");
+        };
+
+        RecordTestSupport.processor(BATCH, SchemaTestSupport.realSchema(), capture, new AiBudget(() -> false))
+                .process(new RawRecord.Parsed(6, unknownCountry()));
+
+        assertThat(sent).hasSize(1);
+    }
+
+    @Test
+    void ac_08_6_onceSpentTheBudgetIsNotAskedAgain() {
+        int[] asked = {0};
+        AiBudget budget = new AiBudget(() -> {
+            asked[0]++;
+            return true;
+        });
+        RecordProcessor spent = RecordTestSupport.processor(
+                BATCH,
+                SchemaTestSupport.realSchema(),
+                request -> {
+                    throw new AssertionError("a spent budget must not reach the AI");
+                },
+                budget);
+
+        spent.process(new RawRecord.Parsed(6, unknownCountry()));
+        spent.process(new RawRecord.Parsed(7, unknownCountry()));
+
+        assertThat(asked[0]).isEqualTo(1);
     }
 
     @ParameterizedTest
