@@ -93,10 +93,10 @@ public class IngestionBatchRepository {
                 jdbc.sql("""
                         UPDATE ingestion_batch SET status = 'COMPLETED', direct_count = :direct,
                             auto_corrected_count = :autoCorrected, quarantined_count = :quarantined, finished_at = :now,
-                            ai_calls_count = (SELECT count(*) FROM ai_call_log a
-                                WHERE a.batch_id = :id AND a.outcome <> 'CACHE_HIT')
+                            ai_calls_count = (SELECT count(*) FROM ai_call_log
+                                WHERE ai_call_log.batch_id = :id AND %s)
                         WHERE id = :id
-                        """)
+                        """.formatted(AiCallLogRepository.SPENDS_BUDGET))
                         .param("id", batchId)
                         .param("direct", counts.direct())
                         .param("autoCorrected", counts.autoCorrected())

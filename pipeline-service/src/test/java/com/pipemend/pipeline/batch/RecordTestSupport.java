@@ -12,6 +12,7 @@ import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaLoader;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
+import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
@@ -65,6 +66,11 @@ public final class RecordTestSupport {
 
     /** The real policy, verifiers and validator, never a mock (docs/09 section 2.3). */
     public static RecordProcessor processor(UUID batchId, SchemaDefinition schema, AiTriagePort triage) {
+        return processor(batchId, schema, triage, new AiBudget(() -> false));
+    }
+
+    public static RecordProcessor processor(
+            UUID batchId, SchemaDefinition schema, AiTriagePort triage, AiBudget budget) {
         Validator validator = new Validator(schema, CLOCK);
         return new RecordProcessor(
                 batchId,
@@ -73,6 +79,7 @@ public final class RecordTestSupport {
                 new SalesTransactionTransformer(schema),
                 new TriageRequestBuilder(batchId, schema, "dirty.csv", "CSV"),
                 triage,
+                budget,
                 applier(schema, validator));
     }
 
