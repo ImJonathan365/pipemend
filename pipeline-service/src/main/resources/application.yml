@@ -35,6 +35,8 @@ pipemend:
     base-url: ${AI_SERVICE_BASE_URL:http://ai-service:8000}
     connect-timeout: ${AI_CLIENT_CONNECT_TIMEOUT_MS:2000}ms
     read-timeout: ${AI_CLIENT_READ_TIMEOUT_MS:30000}ms
+    # Shared with ai-service; the pipeline does not start unless read-timeout exceeds it by 2 s (NFR-07).
+    request-deadline: ${AI_REQUEST_DEADLINE_SECONDS:25}s
   # FR-09. The defaults are those of docs/04 section 8 and docs/02 section 4, and change only with an ADR (AC-09.4).
   policy:
     min-confidence: ${AI_MIN_CONFIDENCE:0.85}

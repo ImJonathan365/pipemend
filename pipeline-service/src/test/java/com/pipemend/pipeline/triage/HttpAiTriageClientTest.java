@@ -368,39 +368,40 @@ class HttpAiTriageClientTest {
     static Stream<Arguments> docs06A5() {
         return Stream.of(
                 // The rows of docs/06 A.5.
-                arguments(400, PROBLEM, "INVALID_REQUEST", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(404, PROBLEM, "NOT_FOUND", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(405, PROBLEM, "METHOD_NOT_ALLOWED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(422, PROBLEM, "VALIDATION_ERROR", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "RATE_LIMITED", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.BudgetExhausted.class, "HTTP_ERROR"),
-                arguments(500, PROBLEM, "INTERNAL_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(502, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(502, PROBLEM, "LLM_PROVIDER_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, "PROVIDER_NOT_CONFIGURED", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(504, PROBLEM, "LLM_TIMEOUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(502, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
-                arguments(503, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
-                arguments(504, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
+                arguments(400, PROBLEM, "INVALID_REQUEST", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(404, PROBLEM, "NOT_FOUND", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(405, PROBLEM, "METHOD_NOT_ALLOWED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(422, PROBLEM, "VALIDATION_ERROR", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(429, PROBLEM, "RATE_LIMITED", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(429, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.BudgetExhausted.class, "HTTP_ERROR", 1),
+                arguments(500, PROBLEM, "INTERNAL_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(502, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(502, PROBLEM, "LLM_PROVIDER_ERROR", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(503, PROBLEM, "PROVIDER_NOT_CONFIGURED", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(504, PROBLEM, "LLM_TIMEOUT", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(502, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE", 3),
+                arguments(503, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE", 3),
+                arguments(504, "text/html", null, TriageOutcome.Unavailable.class, "UNAVAILABLE", 3),
                 arguments(
                         503,
                         "application/json",
                         "PROVIDER_NOT_CONFIGURED",
                         TriageOutcome.Unavailable.class,
-                        "UNAVAILABLE"),
+                        "UNAVAILABLE",
+                        3),
                 // Outside the table: by the status, whatever the code says.
-                arguments(400, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(429, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(429, "text/plain", null, TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(422, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(401, PROBLEM, "UNAUTHORIZED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(418, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(302, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(201, "application/json", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR"),
-                arguments(500, "text/plain", null, TriageOutcome.Unavailable.class, "UNAVAILABLE"),
-                arguments(501, PROBLEM, "SOMETHING_NEW", TriageOutcome.Unavailable.class, "HTTP_ERROR"),
-                arguments(503, PROBLEM, null, TriageOutcome.Unavailable.class, "UNAVAILABLE"));
+                arguments(400, PROBLEM, "LLM_BUDGET_EXHAUSTED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(429, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(503, PROBLEM, "LLM_INVALID_OUTPUT", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(429, "text/plain", null, TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(422, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(401, PROBLEM, "UNAUTHORIZED", TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(418, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(302, "text/plain", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(201, "application/json", null, TriageOutcome.InvalidResponse.class, "HTTP_ERROR", 1),
+                arguments(500, "text/plain", null, TriageOutcome.Unavailable.class, "UNAVAILABLE", 1),
+                arguments(501, PROBLEM, "SOMETHING_NEW", TriageOutcome.Unavailable.class, "HTTP_ERROR", 1),
+                arguments(503, PROBLEM, null, TriageOutcome.Unavailable.class, "UNAVAILABLE", 1));
     }
 
     @ParameterizedTest(name = "{0} {1} {2}")
@@ -410,7 +411,8 @@ class HttpAiTriageClientTest {
             String contentType,
             @Nullable String code,
             Class<? extends TriageOutcome> expected,
-            String outcome) {
+            String outcome,
+            int attempts) {
         String body = code == null
                 ? "{\"detail\":\"" + ROW_VALUE + "\"}"
                 : "{\"type\":\"https://pipemend.dev/problems/x\",\"title\":\"t\",\"status\":" + status
@@ -421,7 +423,12 @@ class HttpAiTriageClientTest {
                 .withBody(body));
 
         assertThat(client.triage(request)).isInstanceOf(expected);
-        assertThat(onlyRow())
+        // NFR-07: only a 502, 503 or 504 without problem+json is retried, always with the same X-Request-Id.
+        server.verify(
+                attempts,
+                postRequestedFor(urlEqualTo("/v1/triage"))
+                        .withHeader("X-Request-Id", equalTo(request.requestId().toString())));
+        assertThat(onlyRow(attempts))
                 .containsEntry("outcome", outcome)
                 .containsEntry("http_status", status)
                 .containsEntry("error_code", contentType.equals(PROBLEM) ? code : null)
@@ -451,7 +458,7 @@ class HttpAiTriageClientTest {
         client = clientFor(URI.create("http://127.0.0.1:" + closed));
 
         assertThat(client.triage(request)).isInstanceOf(TriageOutcome.Unavailable.class);
-        assertThat(onlyRow())
+        assertThat(onlyRow(3))
                 .containsEntry("outcome", "UNAVAILABLE")
                 .containsEntry("http_status", null)
                 .containsEntry("error_detail", "java.net.ConnectException");
@@ -499,7 +506,7 @@ class HttpAiTriageClientTest {
                 socket.close();
             }
         }
-        assertThat(onlyRow())
+        assertThat(onlyRow(3))
                 .containsEntry("outcome", "TIMEOUT")
                 .containsEntry("http_status", null)
                 .containsEntry("error_detail", "java.net.http.HttpConnectTimeoutException");
@@ -519,7 +526,7 @@ class HttpAiTriageClientTest {
             chunk.setRollbackOnly();
         });
 
-        assertThat(onlyRow()).containsEntry("outcome", "UNAVAILABLE");
+        assertThat(onlyRow(3)).containsEntry("outcome", "UNAVAILABLE");
         assertThat(jdbc.sql("SELECT count(*) FROM ingestion_batch WHERE id = :id")
                         .param("id", control)
                         .query(Integer.class)
@@ -543,6 +550,101 @@ class HttpAiTriageClientTest {
         assertThatThrownBy(() -> client.triage(orphan)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void nfr_07_aConnectTimeoutIsRetriedTwiceWithItsBackoff() throws IOException {
+        List<Socket> held = new ArrayList<>();
+        long start = System.nanoTime();
+        try (ServerSocket full = saturated(held)) {
+            client = clientFor(URI.create("http://127.0.0.1:" + full.getLocalPort()));
+            start = System.nanoTime();
+
+            client.triage(request);
+        } finally {
+            for (Socket socket : held) {
+                socket.close();
+            }
+        }
+
+        // Three connect timeouts and the two waits of docs/03 l.99: 500 ms, then 1 s.
+        assertThat(Duration.ofNanos(System.nanoTime() - start))
+                .isGreaterThanOrEqualTo(CONNECT_TIMEOUT.multipliedBy(3).plusMillis(1500));
+        assertThat(onlyRow(3)).containsEntry("outcome", "TIMEOUT");
+    }
+
+    @Test
+    void nfr_07_aReadTimeoutIsNeverRetried() {
+        answer(aResponse()
+                .withStatus(200)
+                .withBody(validAnswer().toString())
+                .withFixedDelay((int) READ_TIMEOUT.toMillis() * 3));
+
+        client.triage(request);
+
+        server.verify(1, postRequestedFor(urlEqualTo("/v1/triage")));
+        assertThat(onlyRow(1)).containsEntry("outcome", "TIMEOUT");
+    }
+
+    @Test
+    void ac_12_2_tenFailuresOpenTheCircuitAndTheNextCallFailsFastWithoutARequest() {
+        answer(aResponse()
+                .withStatus(503)
+                .withHeader("Content-Type", PROBLEM)
+                .withBody("{\"code\":\"PROVIDER_NOT_CONFIGURED\"}"));
+        for (int i = 0; i < AiResilience.MINIMUM_CALLS; i++) {
+            assertThat(client.triage(withNewId())).isInstanceOf(TriageOutcome.Unavailable.class);
+        }
+
+        assertThat(client.triage(request))
+                .isEqualTo(new TriageOutcome.Unavailable("the circuit breaker towards ai-service is open"));
+
+        // D195: attempts = 1 only because of the CHECK of V2; no request reached ai-service.
+        server.verify(AiResilience.MINIMUM_CALLS, postRequestedFor(urlEqualTo("/v1/triage")));
+        Map<String, Object> row = onlyRow(1);
+        assertThat(row)
+                .containsEntry("outcome", "CIRCUIT_OPEN")
+                .containsEntry("http_status", null)
+                .containsEntry("error_code", null)
+                .containsEntry("error_detail", null);
+        assertThat((Integer) row.get("latency_ms")).isLessThan(50);
+    }
+
+    /** docs/03 l.102: contract bugs and model quality are not outages. */
+    static Stream<Arguments> nfr_07_whatIsNotAnOutageNeverOpensTheCircuit() {
+        return Stream.of(
+                arguments("422", 422, PROBLEM, "{\"code\":\"VALIDATION_ERROR\"}"),
+                arguments("502 LLM_INVALID_OUTPUT", 502, PROBLEM, "{\"code\":\"LLM_INVALID_OUTPUT\"}"),
+                arguments("429 LLM_BUDGET_EXHAUSTED", 429, PROBLEM, "{\"code\":\"LLM_BUDGET_EXHAUSTED\"}"),
+                arguments("200 off the contract", 200, "application/json", "{}"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void nfr_07_whatIsNotAnOutageNeverOpensTheCircuit(String name, int status, String contentType, String body) {
+        answer(aResponse()
+                .withStatus(status)
+                .withHeader("Content-Type", contentType)
+                .withBody(body));
+        for (int i = 0; i < AiResilience.WINDOW_CALLS; i++) {
+            client.triage(withNewId());
+        }
+
+        client.triage(request);
+
+        server.verify(AiResilience.WINDOW_CALLS + 1, postRequestedFor(urlEqualTo("/v1/triage")));
+        assertThat(onlyRow(1)).doesNotContainEntry("outcome", "CIRCUIT_OPEN");
+    }
+
+    private TriageRequest withNewId() {
+        return new TriageRequest(
+                UUID.randomUUID(),
+                request.batchId(),
+                request.schema(),
+                request.source(),
+                request.record(),
+                request.violations(),
+                request.options());
+    }
+
     private HttpAiTriageClient clientFor(URI baseUrl) {
         return new HttpAiTriageClient(new AiClientProperties(baseUrl, CONNECT_TIMEOUT, READ_TIMEOUT), json, callLog);
     }
@@ -555,8 +657,12 @@ class HttpAiTriageClientTest {
         return TriageResponseFixtures.tree("triage-response.auto-fixable.json");
     }
 
-    /** AC-08.5: exactly one row per call, also a failed one, with attempts = 1 until Sprint 4. */
     private Map<String, Object> onlyRow() {
+        return onlyRow(1);
+    }
+
+    /** AC-08.5: exactly one row per logical call, also a failed one, with its HTTP attempts. */
+    private Map<String, Object> onlyRow(int attempts) {
         List<Map<String, Object>> rows = jdbc.sql(
                         "SELECT * FROM ai_call_log WHERE batch_id = :batch AND request_id = :request")
                 .param("batch", request.batchId())
@@ -565,7 +671,7 @@ class HttpAiTriageClientTest {
                 .listOfRows();
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.getFirst();
-        assertThat(row).containsEntry("attempts", 1);
+        assertThat(row).containsEntry("attempts", attempts);
         assertThat((Integer) row.get("latency_ms")).isNotNegative();
         return row;
     }

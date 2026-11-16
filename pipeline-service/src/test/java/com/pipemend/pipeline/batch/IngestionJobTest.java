@@ -5,6 +5,7 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.pipemend.pipeline.PostgresTestConfiguration;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -62,6 +64,15 @@ class IngestionJobTest {
     @Autowired
     Inbox inbox;
 
+    @Autowired
+    CircuitBreaker aiCircuitBreaker;
+
+    // The breaker is shared by the context, and ac_12_1 counts the calls it lets through (D197).
+    @BeforeEach
+    void closeTheCircuit() {
+        aiCircuitBreaker.reset();
+    }
+
     @Test
     void ac_13_1_cleanSampleLoadsEveryRowDirectAndPersistsTheBatchMetadata() throws Exception {
         UUID batchId = receive(sample("clean-1k.csv"));
@@ -101,8 +112,12 @@ class IngestionJobTest {
                 .containsEntry("quarantined_count", 50);
         assertThat(count("quarantine_record", batchId, "quarantine_reason = 'AI_UNAVAILABLE'"))
                 .isEqualTo(50);
-        // AC-08.5 and AC-08.6: every refused call leaves its row and counts, also the failed ones.
-        assertThat(count("ai_call_log", batchId, "outcome = 'UNAVAILABLE'")).isEqualTo(50);
+        // AC-08.5 and AC-08.6: every refused call leaves its row and counts, also the failed ones. After ten refused
+        // calls, each retried twice, the circuit breaker opens and refuses the other forty at once (NFR-07, D195).
+        assertThat(count("ai_call_log", batchId, "outcome = 'UNAVAILABLE' AND attempts = 3"))
+                .isEqualTo(10);
+        assertThat(count("ai_call_log", batchId, "outcome = 'CIRCUIT_OPEN' AND attempts = 1 AND http_status IS NULL"))
+                .isEqualTo(40);
         assertThat(jdbc.sql("SELECT ai_calls_count FROM ingestion_batch WHERE id = :id")
                         .param("id", batchId)
                         .query(Integer.class)

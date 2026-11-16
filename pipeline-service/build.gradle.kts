@@ -29,6 +29,9 @@ dependencies {
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1")
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("org.yaml:snakeyaml")
+	// Core modules only (NFR-07): the Spring Boot starter would bring AOP and configuration this client does not use.
+	implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.4.0")
+	implementation("io.github.resilience4j:resilience4j-retry:2.4.0")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-flyway-test")
