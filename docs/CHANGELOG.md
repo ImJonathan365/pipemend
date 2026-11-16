@@ -1738,3 +1738,56 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `UNAVAILABLE`; reinicia el circuit breaker antes de cada test.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`. Dependencias nuevas en
   `build.gradle.kts` y valor nuevo de enum, aprobados por el owner.
+
+## Sprint 4 — Presupuesto de IA por lote (2026-11-15)
+- Rama `feat/FR-08-ai-budget`, la novena y última del plan (FR-08, AC-08.6, `07` l.110-111). `RecordProcessor`
+  comprueba el presupuesto del lote antes de construir la solicitud a la IA (`04` §4). Si está agotado, el registro va a
+  cuarentena con `AI_BUDGET_EXCEEDED` y un resumen técnico (AC-11.2), sin llamada ni fila en `ai_call_log`, con
+  `ai_request_id` nulo (AC-08.5). Tampoco se llama para filas que habrían sido acierto de caché.
+  - El tope es `AI_MAX_CALLS_PER_BATCH` (default 500, `04` l.295), leído en `pipemend.ai.max-calls-per-batch`. El
+    pipeline no arranca con un valor menor que 1.
+  - Un `429 LLM_BUDGET_EXHAUSTED` deja su fila, manda el registro a `AI_BUDGET_EXCEEDED` y agota el presupuesto del
+    resto del lote (`03` l.102, `06` l.334).
+  - Comportamiento aceptado por AC-08.6: si un chunk falla después de llamar a la IA, las filas de esas llamadas quedan
+    en `ai_call_log` (se confirman aparte, NFR-05) y consumen presupuesto. Al reiniciar, esos registros se reprocesan y,
+    si el presupuesto ya se agotó, van a `AI_BUDGET_EXCEEDED` con `ai_request_id` nulo, aunque su llamada de la
+    ejecución fallida siga en `ai_call_log`. `AiBudgetTest.ac_08_6_aRestartGetsNoNewBudget` lo fija.
+- Medido: `./gradlew clean test` tarda 88,7 s y 78,1 s antes y 82,2 s y 82,0 s después; la diferencia queda dentro
+  del ruido entre ejecuciones. La clase nueva `AiBudgetTest` tarda 6,7 s.
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-08-ai-budget: AiBudget en triage con la comprobación en
+  RecordProcessor antes de construir la solicitud; el presupuesto leído de ai_call_log antes de cada llamada posible
+  con la constante SPENDS_BUDGET compartida con complete() y un cerrojo de agotado en el processor de step scope; el
+  429 LLM_BUDGET_EXHAUSTED derivado de su fila; la clave pipemend.ai.max-calls-per-batch en application.yml con
+  AiBudgetProperties que exige un entero >= 1; AiBudgetTest, AiBudgetPropertiesTest y los tests nuevos en
+  AiCallLogRepositoryTest y RecordProcessorTest; los cambios en RecordTestSupport e IngestionJobTriageTest como propone
+  el plan; las decisiones D201 a D209 como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D201: una sola definición de lo que consume presupuesto, `AiCallLogRepository.SPENDS_BUDGET`
+    (`outcome <> 'CACHE_HIT'`), compartida por el presupuesto y por el `ai_calls_count` de `complete()` (AC-08.6,
+    `05` l.65). Por la decisión B del sprint, las filas `CIRCUIT_OPEN` consumen presupuesto: con la IA caída, al llegar
+    al tope el motivo de cuarentena pasa de `AI_UNAVAILABLE` a `AI_BUDGET_EXCEEDED`, porque el presupuesto se comprueba
+    primero (`02` l.171). | Reversible: sí | Aprobado por: owner.
+  - D202: no hay contador en memoria. El presupuesto se lee de `ai_call_log` antes de cada llamada posible (`05` l.65:
+    "durante el job la fuente es `ai_call_log`"), así que el arranque y el reinicio leen lo mismo que leerá
+    `complete()`. | Reversible: sí | Aprobado por: owner.
+  - D203: un cerrojo monótono "agotado" en `AiBudget`, que vive en el processor de step scope. Una vez agotado, no se
+    vuelve a consultar: las filas no se borran y el tope no cambia durante el step. Nada pasa de un lote a otro.
+    | Reversible: sí | Aprobado por: owner.
+  - D204: la comprobación está en `RecordProcessor`, no en un decorador del puerto, porque en `04` §4 es un paso
+    propio antes de la IA; también la atraviesan las filas `MALFORMED_ROW`. | Reversible: sí | Aprobado por: owner.
+  - D205: el 429 agota el presupuesto derivándolo de su fila (`http_status = 429 AND error_code =
+    'LLM_BUDGET_EXHAUSTED'`), sin estado nuevo en BD. Un 400 con ese `code` no lo agota. | Reversible: sí
+    | Aprobado por: owner.
+  - D206: `pipemend.ai.max-calls-per-batch` es un entero >= 1 validado al arrancar; 0 no se admite porque equivaldría
+    a un modo sin IA que los docs no definen. | Reversible: sí | Aprobado por: owner.
+  - D207: "alcanzado" significa `gastado >= tope`: con tope N se hacen exactamente N llamadas lógicas que consumen.
+    | Reversible: sí | Aprobado por: owner.
+  - D208: si falla la consulta del presupuesto, el registro va a `PROCESSING_ERROR` por el catch que ya existe, sin
+    llamar a la IA; no hay catch nuevo. | Reversible: sí | Aprobado por: owner.
+  - D209: los tests de presupuesto usan un contexto propio con tope 5; el caso `CIRCUIT_OPEN` fuerza a OPEN el circuit
+    breaker del contexto, que se reinicia antes de cada test. | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `RecordTestSupport`: el helper pasa un presupuesto que nunca se agota y gana una sobrecarga que recibe uno.
+  - `IngestionJobTriageTest`: `AutoFixableEcho` gana el interruptor `cacheHit` (se reinicia en `@AfterEach`) y deja
+    intacta una respuesta que no sea 200. Ninguna aserción cambia.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
