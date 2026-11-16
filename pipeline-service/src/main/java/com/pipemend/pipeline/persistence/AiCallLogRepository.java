@@ -23,6 +23,7 @@ public class AiCallLogRepository {
         CACHE_HIT,
         TIMEOUT,
         UNAVAILABLE,
+        CIRCUIT_OPEN,
         INVALID_RESPONSE,
         HTTP_ERROR
     }

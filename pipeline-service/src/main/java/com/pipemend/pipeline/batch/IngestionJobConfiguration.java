@@ -12,12 +12,14 @@ import com.pipemend.pipeline.policy.PolicyProperties;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiClientProperties;
+import com.pipemend.pipeline.triage.AiResilience;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.HttpAiTriageClient;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
 import com.pipemend.pipeline.verifiers.CountryAliases;
 import com.pipemend.pipeline.verifiers.Verifiers;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.springframework.batch.core.ExitStatus;
@@ -209,8 +211,14 @@ public class IngestionJobConfiguration {
     }
 
     @Bean
-    AiTriagePort aiTriagePort(AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog) {
-        return new HttpAiTriageClient(properties, json, callLog);
+    CircuitBreaker aiCircuitBreaker() {
+        return AiResilience.circuitBreaker();
+    }
+
+    @Bean
+    AiTriagePort aiTriagePort(
+            AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog, CircuitBreaker breaker) {
+        return new HttpAiTriageClient(properties, json, callLog, breaker);
     }
 
     @Bean
