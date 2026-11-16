@@ -1684,3 +1684,57 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   `thereAreFiveValidRequestFixtures` (`hasSize(5)`) por la fixture nueva.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `contracts/fixtures/triage-request.prompt-injection.json`
   (nuevo), 🟠 `contracts/fixtures/index.json` y 🟠 `docs/CHANGELOG.md`.
+## Sprint 4 — Resiliencia del cliente de IA (2026-11-15)
+- Rama `feat/FR-12-resilience`, la octava del plan (FR-12, NFR-07). El cliente de ai-service gana el reintento de
+  transporte y el circuit breaker de `03` l.99-102, con `resilience4j-circuitbreaker` y `resilience4j-retry` 2.4.0, sin
+  el starter de Spring Boot. Gradle las resuelve (solo traen `resilience4j-core` 2.4.0) y los tests corren con el
+  toolchain de Java 25.
+  - Cada llamada lógica deja una fila en `ai_call_log` con sus `attempts` y el mismo `X-Request-Id` en todos los
+    intentos (AC-08.5). Si el circuito está abierto, no se envía ninguna petición: la fila es `CIRCUIT_OPEN` y el
+    registro va a cuarentena con `AI_UNAVAILABLE` (`02` l.165). `AiCallLogRepository.Outcome` gana `CIRCUIT_OPEN`, que
+    el CHECK de V2 ya admitía.
+  - Invariante de NFR-07 (`03` l.98): el pipeline no arranca si `AI_CLIENT_READ_TIMEOUT_MS` no supera
+    `AI_REQUEST_DEADLINE_SECONDS × 1000 + 2000`. `application.yml` lee el plazo en `pipemend.ai.request-deadline`.
+  - Log `WARN` al abrirse el circuito, sin datos del registro (NFR-08).
+- Medido: `./gradlew clean test` pasa de 37,9 s a 68,9 s (+31 s). Los tests con la IA caída esperan 1,5 s por llamada
+  reintentada hasta que se abre el circuito (D200). AC-12.5 (`AiHangTest`, lectura de 500 ms) tarda 6,3 s.
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-12-resilience: las dependencias nuevas
+  io.github.resilience4j:resilience4j-circuitbreaker y resilience4j-retry 2.4.0 sin el starter de Spring Boot; el valor
+  nuevo CIRCUIT_OPEN en el enum AiCallLogRepository.Outcome; AiResilience con los valores de NFR-07, el circuit breaker
+  por fuera del retry, reintento solo de la lista cerrada de 03 l.99 y circuit breaker que cuenta exactamente las fallas
+  Unavailable; las filas CIRCUIT_OPEN con attempts = 1 y AI_UNAVAILABLE; el invariante de timeouts con
+  pipemend.ai.request-deadline en application.yml; AiHangTest para AC-12.5 y los tests nuevos de reintento y circuit
+  breaker; los cambios en HttpAiTriageClientTest e IngestionJobTest como propone el plan; las decisiones D192 a D200
+  como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D192: el circuit breaker envuelve el retry. Una llamada lógica cuenta una vez en la ventana de 20 llamadas
+    (`03` l.100), y con el circuito abierto no se reintenta. | Reversible: sí | Aprobado por: owner.
+  - D193: cuenta como falla exactamente un resultado `Unavailable`: transporte, *read timeout*, 429 `RATE_LIMITED`,
+    500, 502 `LLM_PROVIDER_ERROR`, 503 y 504 (`03` l.102, `06` A.5). Un 4xx, un 502 `LLM_INVALID_OUTPUT`, un 200 fuera
+    del contrato o un 429 `LLM_BUDGET_EXHAUSTED` no cuentan. | Reversible: sí | Aprobado por: owner.
+  - D194: se reintenta solo la lista cerrada de `03` l.99: conexión rechazada, timeout de conexión y 502/503/504 sin
+    cuerpo `problem+json`. No se reintentan el *read timeout*, el corte de conexión a mitad de respuesta, el 500 sin
+    `problem+json` ni un `problem+json` sin `code`: ninguna fila de `06` A.5 permite reintentar un cuerpo
+    `problem+json`, tenga o no `code` (opción conservadora). | Reversible: sí | Aprobado por: owner.
+  - D195: una fila `CIRCUIT_OPEN` lleva `attempts = 1`, que en esa fila significa **0 peticiones HTTP**: el CHECK de
+    V2 (`attempts >= 1`) no admite 0, y cambiarlo exigiría una migración nueva. La fila se distingue por `outcome` y por
+    `http_status` nulo; un test comprueba que WireMock no recibió la petición. | Reversible: con una migración nueva
+    | Aprobado por: owner.
+  - D196: la cota de AC-12.5 en el test es `10 × read_timeout + 3 × read_timeout` (un ciclo half-open de holgura) más
+    10 s fijos para leer y cargar las 1000 filas, que la fórmula de `03` no incluye. Además, como mucho 10 filas
+    `TIMEOUT` y cada `CIRCUIT_OPEN` en menos de 50 ms. | Reversible: sí | Aprobado por: owner.
+  - D197: el circuit breaker es un bean compartido; solo `IngestionJobTest` lo reinicia en `@BeforeEach`, porque es
+    el único test Spring que cuenta los `outcome` con la IA caída. | Reversible: sí | Aprobado por: owner.
+  - D198: los valores de NFR-07 son constantes de `AiResilience`; `03` no les da variable de entorno. | Reversible: sí
+    | Aprobado por: owner.
+  - D199: el invariante de timeouts entra en esta rama, como pide `07` l.109. | Reversible: sí | Aprobado por: owner.
+  - D200: la espera de 500 ms ×2 de `03` se mantiene en los tests; el aumento medido (+31 s) no pasa del minuto.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `HttpAiTriageClientTest`: `onlyRow` recibe los `attempts` esperados; la tabla de `docs06A5` gana la columna
+    `attempts` (3 para 502/503/504 sin `problem+json`) y comprueba el número de peticiones con el mismo
+    `X-Request-Id`; la conexión rechazada, el timeout de conexión y `nfr_05` esperan `attempts = 3`.
+  - `IngestionJobTest.ac_12_1`: 10 filas `UNAVAILABLE` con `attempts = 3` y 40 `CIRCUIT_OPEN` en lugar de 50
+    `UNAVAILABLE`; reinicia el circuit breaker antes de cada test.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`. Dependencias nuevas en
+  `build.gradle.kts` y valor nuevo de enum, aprobados por el owner.
