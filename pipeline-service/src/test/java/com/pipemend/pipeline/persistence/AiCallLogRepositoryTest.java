@@ -10,13 +10,17 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
-/** error_detail against a real PostgreSQL: at most 4 KB of UTF-8 (docs/05 section 3.5), never half a character. */
+/**
+ * error_detail against a real PostgreSQL: at most 4 KB of UTF-8 (docs/05 section 3.5), never half a character. And the
+ * budget of AC-08.6, read from the rows.
+ */
 @SpringBootTest
 @Import(PostgresTestConfiguration.class)
 class AiCallLogRepositoryTest {
@@ -92,6 +96,59 @@ class AiCallLogRepositoryTest {
                 .containsEntry("prompt_version", "triage_v1")
                 .containsEntry("input_tokens", 5)
                 .containsEntry("output_tokens", 6);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "SUCCESS, true",
+        "CACHE_HIT, false",
+        "TIMEOUT, true",
+        "UNAVAILABLE, true",
+        "CIRCUIT_OPEN, true",
+        "INVALID_RESPONSE, true",
+        "HTTP_ERROR, true"
+    })
+    void ac_08_6_everyLogicalCallSpendsBudgetExceptACacheHit(Outcome outcome, boolean spends) {
+        UUID batchId = insertBatch();
+
+        log(batchId, outcome, null, null);
+
+        assertThat(callLog.budgetExhausted(batchId, 1)).isEqualTo(spends);
+    }
+
+    @Test
+    void ac_08_6_theBudgetIsSpentAtExactlyTheCap() {
+        UUID batchId = insertBatch();
+        log(batchId, Outcome.SUCCESS, 200, null);
+        log(batchId, Outcome.CACHE_HIT, 200, null);
+        log(batchId, Outcome.TIMEOUT, null, null);
+
+        assertThat(callLog.budgetExhausted(batchId, 3)).isFalse();
+        assertThat(callLog.budgetExhausted(batchId, 2)).isTrue();
+    }
+
+    @Test
+    void ac_08_6_theCallsOfAnotherBatchSpendNothing() {
+        UUID other = insertBatch();
+        log(other, Outcome.SUCCESS, 200, null);
+        log(other, Outcome.HTTP_ERROR, 429, "LLM_BUDGET_EXHAUSTED");
+
+        assertThat(callLog.budgetExhausted(insertBatch(), 1)).isFalse();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"429, LLM_BUDGET_EXHAUSTED, true", "429, RATE_LIMITED, false", "400, LLM_BUDGET_EXHAUSTED, false"})
+    void docs03_l102_only429LlmBudgetExhaustedSpendsTheWholeBudget(int status, String code, boolean spent) {
+        UUID batchId = insertBatch();
+
+        log(batchId, Outcome.HTTP_ERROR, status, code);
+
+        assertThat(callLog.budgetExhausted(batchId, 500)).isEqualTo(spent);
+    }
+
+    private void log(UUID batchId, Outcome outcome, @Nullable Integer status, @Nullable String code) {
+        callLog.save(new Entry(
+                UUID.randomUUID(), batchId, 1, outcome, status, code, 1, null, 1, null, null, null, null, null, null));
     }
 
     private @Nullable String storedDetail(String detail) {

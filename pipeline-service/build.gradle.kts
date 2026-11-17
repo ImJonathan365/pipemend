@@ -29,6 +29,9 @@ dependencies {
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1")
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("org.yaml:snakeyaml")
+	// Core modules only (NFR-07): the Spring Boot starter would bring AOP and configuration this client does not use.
+	implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.4.0")
+	implementation("io.github.resilience4j:resilience4j-retry:2.4.0")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-flyway-test")
@@ -48,6 +51,14 @@ tasks.withType<Test> {
     testLogging {
         events("passed", "skipped", "failed")
     }
+    // AC-20.3 runs against the ai-service image, so an ai-service change must rerun the tests instead of
+    // reusing an up-to-date result. The image itself is still rebuilt by hand (AGENTS.md).
+    inputs.files(
+        fileTree("../ai-service/app") { exclude("**/__pycache__/**") },
+        "../ai-service/Dockerfile",
+        "../ai-service/pyproject.toml",
+        "../ai-service/uv.lock",
+    ).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("aiServiceSources")
 }
 
 spotless {

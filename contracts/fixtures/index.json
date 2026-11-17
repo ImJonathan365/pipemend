@@ -28,6 +28,13 @@
     "rule": "AC-07.4 with AI_SEND_FULL_RECORD=false, D63"
   },
   {
+    "fixture": "triage-request.prompt-injection.json",
+    "kind": "request",
+    "expected": "valid",
+    "pydantic": "accepts",
+    "rule": "docs/03 NFR-14: an instruction injected in Description; row based on dirty-1k row 6, Country and Description changed"
+  },
+  {
     "fixture": "triage-request.invalid.unknown-field.json",
     "kind": "request",
     "expected": "VALIDATION_ERROR",

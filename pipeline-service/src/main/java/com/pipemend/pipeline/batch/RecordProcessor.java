@@ -1,13 +1,17 @@
 package com.pipemend.pipeline.batch;
 
 import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
+import com.pipemend.pipeline.policy.CorrectionApplier;
+import com.pipemend.pipeline.policy.PolicyDecision;
 import com.pipemend.pipeline.schema.FieldSpec;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
+import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
+import com.pipemend.pipeline.triage.contract.Classification;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
 import com.pipemend.pipeline.validation.ErrorCode;
 import com.pipemend.pipeline.validation.Validator;
@@ -23,9 +27,10 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.batch.infrastructure.item.ItemProcessor;
 
 /**
- * Decides the outcome of one record (docs/04 section 4): valid records are transformed and loaded, invalid ones go
- * through the triage port to quarantine. There is no skip policy: an unexpected exception quarantines the record with
- * PROCESSING_ERROR, so it is never lost (NFR-06).
+ * Decides the outcome of one record (docs/04 section 4): valid records are transformed and loaded DIRECT; invalid ones
+ * go through the AI budget and the triage port and, when every analysis is AUTO_FIXABLE, through the CorrectionApplier, which is the
+ * only way to an AUTO_CORRECTED row. Everything else is quarantined. There is no skip policy: an unexpected exception
+ * quarantines the record with PROCESSING_ERROR, so it is never lost (NFR-06).
  */
 public final class RecordProcessor implements ItemProcessor<RawRecord, ProcessedRecord> {
 
@@ -35,6 +40,8 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
     private final SalesTransactionTransformer transformer;
     private final TriageRequestBuilder requests;
     private final AiTriagePort triage;
+    private final AiBudget budget;
+    private final CorrectionApplier applier;
 
     public RecordProcessor(
             UUID batchId,
@@ -42,13 +49,17 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
             Validator validator,
             SalesTransactionTransformer transformer,
             TriageRequestBuilder requests,
-            AiTriagePort triage) {
+            AiTriagePort triage,
+            AiBudget budget,
+            CorrectionApplier applier) {
         this.batchId = batchId;
         this.schema = schema;
         this.validator = validator;
         this.transformer = transformer;
         this.requests = requests;
         this.triage = triage;
+        this.budget = budget;
+        this.applier = applier;
     }
 
     @Override
@@ -56,20 +67,31 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
         List<Violation> violations = List.of();
         UUID aiRequestId = null;
         try {
+            // A malformed row has no fields: the policy rejects MALFORMED_ROW before anything reads them (D175).
+            Map<String, String> fields = Map.of();
             switch (record) {
                 case RawRecord.Malformed malformed -> violations = List.of(malformedRow(malformed));
                 case RawRecord.Parsed parsed -> {
-                    Map<String, String> fields = toFields(parsed);
+                    fields = toFields(parsed);
                     violations = validator.validate(fields);
                     if (violations.isEmpty()) {
-                        return new ProcessedRecord.Loaded(
+                        return ProcessedRecord.Loaded.direct(
                                 transformer.transform(batchId, parsed.sourceRowNumber(), fields, LoadOrigin.DIRECT));
                     }
                 }
             }
+            // docs/04 section 4: checked before the call, so a spent budget leaves no ai_call_log row (AC-08.5).
+            if (budget.exhausted()) {
+                return technical(
+                        record,
+                        violations,
+                        QuarantineReason.AI_BUDGET_EXCEEDED,
+                        "The AI call budget of the batch is exhausted",
+                        null);
+            }
             TriageRequest request = requests.build(UUID.randomUUID(), record, violations);
             aiRequestId = request.requestId();
-            return triage(record, violations, request);
+            return triage(record, fields, violations, request);
         } catch (Exception e) {
             String summary = "Unexpected error while processing the record: " + e;
             return quarantine(
@@ -78,12 +100,14 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
                     QuarantineReason.PROCESSING_ERROR,
                     violations.isEmpty() ? summary : summary + ". " + describe(violations),
                     null,
-                    aiRequestId);
+                    aiRequestId,
+                    null);
         }
     }
 
     /** docs/02 section 5: the first step that fails decides the reason. */
-    private ProcessedRecord triage(RawRecord record, List<Violation> violations, TriageRequest request) {
+    private ProcessedRecord triage(
+            RawRecord record, Map<String, String> fields, List<Violation> violations, TriageRequest request) {
         UUID id = request.requestId();
         return switch (triage.triage(request)) {
             case TriageOutcome.Unavailable failed ->
@@ -92,23 +116,65 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
                 technical(record, violations, QuarantineReason.AI_INVALID_RESPONSE, failed.detail(), id);
             case TriageOutcome.BudgetExhausted failed ->
                 technical(record, violations, QuarantineReason.AI_BUDGET_EXCEEDED, failed.detail(), id);
-            // AUTO_FIXABLE lands here too until the CorrectionPolicy exists (Sprint 4): no policy, no correction.
-            case TriageOutcome.Analysed analysed ->
+            case TriageOutcome.Analysed analysed -> analysed(record, fields, violations, request, analysed);
+        };
+    }
+
+    /** D167: once there is a valid analysis, the summary is the AI's and the analysis is kept, whatever the reason. */
+    private ProcessedRecord analysed(
+            RawRecord record,
+            Map<String, String> fields,
+            List<Violation> violations,
+            TriageRequest request,
+            TriageOutcome.Analysed analysed) {
+        String summary = analysed.response().summary();
+        ProcessedRecord.AiAnalysis analysis = new ProcessedRecord.AiAnalysis(
+                analysed.body(), analysed.verdict().maxSeverity());
+        // The decision recomputed by TriageResponseValidator, never the recordDecision received.
+        if (analysed.verdict().recordDecision() == Classification.NEEDS_HUMAN_REVIEW) {
+            return quarantine(
+                    record,
+                    violations,
+                    QuarantineReason.AI_REVIEW_REQUIRED,
+                    summary,
+                    analysis,
+                    request.requestId(),
+                    null);
+        }
+        return switch (applier.apply(fields, request.violations(), analysed.response())) {
+            case CorrectionApplier.Corrected corrected ->
+                ProcessedRecord.Loaded.autoCorrected(
+                        transformer.transform(
+                                batchId, record.sourceRowNumber(), corrected.fields(), LoadOrigin.AUTO_CORRECTED),
+                        corrected);
+            case CorrectionApplier.Rejected rejected ->
                 quarantine(
                         record,
                         violations,
-                        QuarantineReason.AI_REVIEW_REQUIRED,
-                        analysed.response().summary(),
-                        new ProcessedRecord.AiAnalysis(
-                                analysed.body(), analysed.verdict().maxSeverity()),
-                        id);
+                        reasonOf(rejected.reason()),
+                        summary,
+                        analysis,
+                        request.requestId(),
+                        rejected.decision());
+        };
+    }
+
+    private static QuarantineReason reasonOf(CorrectionApplier.Rejection rejection) {
+        return switch (rejection) {
+            case POLICY_REJECTED -> QuarantineReason.POLICY_REJECTED;
+            case VERIFICATION_FAILED -> QuarantineReason.VERIFICATION_FAILED;
+            case REVALIDATION_FAILED -> QuarantineReason.REVALIDATION_FAILED;
         };
     }
 
     /** AC-11.2: a summary written by the pipeline, without AI. */
     private ProcessedRecord.Quarantined technical(
-            RawRecord record, List<Violation> violations, QuarantineReason reason, String detail, UUID aiRequestId) {
-        return quarantine(record, violations, reason, detail + ". " + describe(violations), null, aiRequestId);
+            RawRecord record,
+            List<Violation> violations,
+            QuarantineReason reason,
+            String detail,
+            @Nullable UUID aiRequestId) {
+        return quarantine(record, violations, reason, detail + ". " + describe(violations), null, aiRequestId, null);
     }
 
     private ProcessedRecord.Quarantined quarantine(
@@ -117,13 +183,22 @@ public final class RecordProcessor implements ItemProcessor<RawRecord, Processed
             QuarantineReason reason,
             String summary,
             ProcessedRecord.@Nullable AiAnalysis analysis,
-            @Nullable UUID aiRequestId) {
+            @Nullable UUID aiRequestId,
+            @Nullable PolicyDecision policyDecision) {
         Map<String, String> payload = switch (record) {
             case RawRecord.Parsed parsed -> parsed.valuesByHeader();
             case RawRecord.Malformed malformed -> Map.of(TriageRequestBuilder.RAW_LINE, malformed.rawLine());
         };
         return new ProcessedRecord.Quarantined(
-                batchId, record.sourceRowNumber(), payload, violations, reason, summary, analysis, aiRequestId);
+                batchId,
+                record.sourceRowNumber(),
+                payload,
+                violations,
+                reason,
+                summary,
+                analysis,
+                aiRequestId,
+                policyDecision);
     }
 
     private Map<String, String> toFields(RawRecord.Parsed record) {

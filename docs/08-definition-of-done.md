@@ -40,12 +40,12 @@ Tres niveles: por historia/PR, por sprint y por proyecto completo. Un ítem no m
 ### 3.2 Calidad de datos y de IA
 
 - [ ] Invariante `read = direct + autoCorrected + quarantined` verificado por test para cada muestra.
-- [ ] Ninguna fila aparece en `sales_transaction` y `quarantine_record` a la vez (test).
-- [ ] Reenviar el mismo archivo → `409`; reenviar un archivo `REJECTED` → lote nuevo; reinicio tras falla → sin duplicados; lote zombi reconciliado a `FAILED`/`INTERRUPTED` al arrancar (tests). <!-- rev: R-12 -->
-- [ ] Test que verifica que la metadata de Spring Batch se persiste en PostgreSQL (`BATCH_JOB_EXECUTION` con filas tras un job). <!-- rev: R-16 -->
-- [ ] Evaluación con `mock` sobre `dirty-1k` (AC-20.3): **cada fila** termina con su `expected_outcome`, **0** auto-correcciones incorrectas, **0** defectos no corregibles en la tabla limpia (test en CI). Con mock el *recall* esperado es 100 %: el 80 % de OBJ-3 es la meta para el LLM real, no el gate del mock. <!-- rev: R-26 -->
-- [ ] Suite adversarial (AC-10.6) en verde: ninguna corrección plausible pero incorrecta llega a `sales_transaction`. <!-- rev: R-25 -->
-- [ ] Test de IA colgada (AC-12.5) en verde dentro de la cota de NFR-07. <!-- rev: R-11 -->
+- [x] Ninguna fila aparece en `sales_transaction` y `quarantine_record` a la vez (test). Tests: `Ac203MockEvaluationTest.ac_20_3_everyRowOfDirty1kEndsWithItsLabelledOutcomeAndEveryCorrectionMatchesItsCleanValue`, `ProcessedRecordWriterTest.eachOutcomeReachesOnlyItsOwnTable`.
+- [x] Reenviar el mismo archivo → `409`; reenviar un archivo `REJECTED` → lote nuevo; reinicio tras falla → sin duplicados; lote zombi reconciliado a `FAILED`/`INTERRUPTED` al arrancar (tests). Tests: `IngestionEndpointTest.ac_04_2_aDuplicateOfAnActiveBatchIsAConflictThatCreatesNothing`, `IngestionEndpointTest.ac_04_3b_aFileWhoseOnlyBatchWasRejectedIsAcceptedAsANewBatch`, `IngestionJobTest.ac_04_4_aRestartAfterAFailedChunkResumesWithoutDuplicates`, `StartupReconciliationTest.ac_04_6_aRestartReconcilesTheBatchesAStoppedProcessLeftBehind`. <!-- rev: R-12 -->
+- [x] Test que verifica que la metadata de Spring Batch se persiste en PostgreSQL (`BATCH_JOB_EXECUTION` con filas tras un job). Test: `IngestionJobTest.ac_13_1_cleanSampleLoadsEveryRowDirectAndPersistsTheBatchMetadata`. <!-- rev: R-16 -->
+- [x] Evaluación con `mock` sobre `dirty-1k` (AC-20.3): **cada fila** termina con su `expected_outcome`, **0** auto-correcciones incorrectas, **0** defectos no corregibles en la tabla limpia (test en CI). Con mock el *recall* esperado es 100 %: el 80 % de OBJ-3 es la meta para el LLM real, no el gate del mock. Test: `Ac203MockEvaluationTest.ac_20_3_everyRowOfDirty1kEndsWithItsLabelledOutcomeAndEveryCorrectionMatchesItsCleanValue`. <!-- rev: R-26 -->
+- [x] Suite adversarial (AC-10.6) en verde: ninguna corrección plausible pero incorrecta llega a `sales_transaction`. Test: `AdversarialSuiteTest.ac_10_6_aPlausibleButWrongAnswerNeverReachesSalesTransaction`. <!-- rev: R-25 -->
+- [x] Test de IA colgada (AC-12.5) en verde dentro de la cota de NFR-07. Test: `AiHangTest.ac_12_5_aHangingAiServiceQuarantinesEveryInvalidRecordWithinTheBoundOfNfr07`. <!-- rev: R-11 -->
 - [ ] Al menos un reporte de evaluación con un LLM real publicado en `reports/` y enlazado desde el README, con números honestos (incluidos errores).
 
 ### 3.3 No funcional

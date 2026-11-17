@@ -940,8 +940,8 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     esa rama con dos correcciones: la spec declara todos los códigos de `06` A.5, también 429 y 504, y
     la fila 500 lleva todas sus columnas, alineada con NFR-07.
   - Sprint 4: riesgo de NFR-13. La caché de `ai-service` sobrevive a una base limpia si no se reinicia
-    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Sin
-    resolver.
+    el proceso: la segunda ejecución tendría más `cacheHit = true` y menos `ai_calls_count`. Resuelto
+    el 2026-11-15 con D184: "base limpia" es el stack entero (`down -v`), nota en `03` NFR-13.
   - Sprint 5: cumplir `09` §7.11 con `triage_v1.md` antes de añadir un proveedor real; contar
     `llmCalls` reales; plazo total, `asyncio.timeout`, tope diario, reparación y mapeo de errores.
 
@@ -1299,3 +1299,523 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados (con aprobación explícita del owner): `docs/CHANGELOG.md`.
 - Sin verificar: la rama de `JacksonException` no tiene test. Un cuerpo que ya aceptó `TriageJson` no debería fallar
   como JSON en el lector del árbol, así que la captura es solo una defensa.
+
+## Sprint 4 — Registro de horas y punto de control del Sprint 2 (2026-11-12)
+- Registro de horas reales (`07` §4 bis). El owner las estimó a partir de los días con actividad en git y en las
+  sesiones, a 2,5 h por día:
+
+  | Sprint | Días | Horas reales | Realista en `07` |
+  |---|---|---|---|
+  | S1 | 8 | ≈ 20 h | 12–14 h |
+  | S2 | 9 | ≈ 22 h | 12–15 h |
+  | S3 | 11 | ≈ 28 h | 10–12 h |
+  | **Total** | 28 | **≈ 70 h** | 34–41 h (`07` l.16-18) |
+
+  Estimación del Sprint 4: 24–32 h reales, frente a las ~14 h de `07` l.113. No se recorta nada del Sprint 4. Si al
+  cerrar su semana `v0.4` no está etiquetada, se avisa con la estimación restante y el owner aplica `07` l.190.
+- Decisión del owner (2026-11-12): se aplica con retraso el punto de control del fin del Sprint 2 (`07` l.189: "Horas
+  acumuladas S1+S2 > 26 h, o `v0.2` sin etiquetar → Recortar ya FR-22 y el endpoint de FR-21 (se conserva el test de
+  idempotencia)").
+  - Recortados: FR-22 (resolución de cuarentena) y el endpoint de reinicio de FR-21.
+  - Se conserva: el test de idempotencia de FR-21.
+  - `docs/07` no cambia y no se recorta nada más. FR-05 se decide en el punto de control del Sprint 6 (`07` l.191);
+    las horas acumuladas ya superan las 60 h que ese punto fija.
+
+## Sprint 4 — `CorrectionPolicy` (2026-11-12)
+- Hecho: FR-09, sin cablear al job. `07` l.105: "`CorrectionPolicy` + tests parametrizados".
+  - AC-09.1: las condiciones por violación, sin leer `recordDecision`.
+  - AC-09.3: el motivo de cada rechazo.
+  - AC-09.4: umbrales y allowlist configurables, con arranque fallido.
+  - AC-09.5: tests parametrizados.
+  - AC-09.2: la política devuelve "todo o nada"; el motivo en `quarantine_record` llega con el aplicador.
+
+  Hasta entonces, un `AUTO_FIXABLE` sigue en cuarentena con `AI_REVIEW_REQUIRED` (provisional).
+- Valores por defecto implementados tal como están documentados, en `application.yml`:
+  - `AI_MIN_CONFIDENCE` 0.85 y `AI_ENUM_MIN_CONFIDENCE` 0.90 (`04` l.292-293);
+  - la allowlist de `02` §4 sin `RENAME_COLUMN`, que es solo de FR-05.
+
+  `CorrectionCatalog` guarda ese universo; la allowlist configurada solo puede reducirlo.
+- Decisión del owner (2026-11-12): "Apruebo en feat/FR-09-correction-policy: crear CorrectionPolicy,
+  PolicyEvaluation, RejectionReason, PolicyProperties y CorrectionCatalog en policy/, sin cablear al job; implementar
+  en application.yml los umbrales por defecto AI_MIN_CONFIDENCE 0.85 y AI_ENUM_MIN_CONFIDENCE 0.90 y la allowlist por
+  defecto de docs/02 §4 tal como están documentados, con arranque fallido según AC-09.4; el orden de motivos y la
+  excepción ante NEEDS_HUMAN_REVIEW como propone el plan; y añadir al CHANGELOG la entrada de la rama, el registro de
+  horas S1–S3 y el recorte de FR-22 y del endpoint de FR-21 con la cita de docs/07 l.189."
+- Decisiones:
+  - D147: cada violación guarda un solo motivo, el de la primera condición que falla, en este orden:
+    `ERROR_CODE_NOT_CORRECTABLE`, `OPERATION_NOT_ALLOWED`, `FIELD_NOT_ALLOWED`, `SEVERITY_TOO_HIGH` y
+    `CONFIDENCE_BELOW_THRESHOLD`. Primero va lo estructural y después lo que depende de la IA. `05` §5 prevé un único
+    `rejectionReason`. | Alternativas: guardar todos los motivos, lo que cambiaría `05` | Reversible: sí | Aprobado
+    por: owner.
+  - D148: un análisis `NEEDS_HUMAN_REVIEW` que llega a la política lanza `IllegalStateException` con un mensaje fijo y
+    sin valores; la política no la captura. Esos registros van antes a `AI_REVIEW_REQUIRED` (`04` l.133), así que
+    llegar aquí es un bug, y termina en `PROCESSING_ERROR`. Lo mismo si los análisis no emparejan con las violaciones.
+    | Alternativas: un motivo `NOT_AUTO_FIXABLE`, que sería un valor nuevo | Reversible: sí | Aprobado por: owner.
+  - D149: la allowlist solo se configura por propiedad (`pipemend.policy.allowlist`), sin variable de entorno nueva.
+    `.env.example` y `04` §8 no cambian. Una operación fuera del enum ya falla al enlazar la configuración. | Reversible:
+    sí | Aprobado por: owner.
+  - D150: `MAP_TO_ENUM` usa solo `AI_ENUM_MIN_CONFIDENCE`, también si se configura por debajo del umbral general; lo
+    cubre un test. | Reversible: sí.
+  - D151: la parte `verification` de `policy_decision` (`05` §5) no se modela aquí. El JSON completo lo compone el
+    aplicador, cuando existan los verificadores, sin dejar un campo vacío ahora. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner):
+  - 🔴 los valores por defecto de umbrales y allowlist en `application.yml`, y `CorrectionCatalog`, implementados sin
+    cambiar lo documentado;
+  - 🟠 `policy/**`;
+  - 🟠 `docs/CHANGELOG.md`.
+- Pendiente:
+  - Rama `feat/FR-10-text-verifiers`: el verificador de `MAP_TO_ENUM` vuelve a comprobar
+    `confidence >= AI_ENUM_MIN_CONFIDENCE` (`02` §4, condición 3). El duplicado con la política es intencionado.
+  - Rama `test/FR-20-ac-20-3`: el comando local que construye la imagen de `ai-service` antes de `./gradlew test` va
+    en `AGENTS.md` y en el README.
+
+## Sprint 4 — Verificadores de texto (2026-11-13)
+- Hecho: la parte de texto de `07` l.106, sin cablear al job. Son los verificadores de `TRIM`, `NORMALIZE_CASE`,
+  `NULLIFY_TOKEN` y `MAP_TO_ENUM` (`02` l.117-126), con `country-aliases.v1.yaml` leído y nunca modificado.
+  - AC-10.1 queda parcial: faltan los verificadores `PARSE_*` (rama 3).
+  - AC-10.5: los siete códigos, que se guardan en `policy_decision` con el aplicador (rama 4).
+- `CountryAliases` es un bean de `CoreConfiguration` que se carga al arrancar, como `SchemaDefinition`. La aplicación
+  no arranca si el YAML trae un país fuera del catálogo, un alias normalizado que apunta a dos países, o un catálogo
+  distinto de `countries.v1.txt`. Lo prueba `ApplicationContextRunner`.
+- Medido antes del código, sobre el YAML y el catálogo reales (solo lectura): 41 países en el catálogo, 40 con alias
+  y 118 alias. Ningún país del YAML falta en el catálogo, ningún alias es ambiguo y no hay dos países con la misma
+  forma normalizada.
+- Corregida la tabla de horas del Sprint 4 (pedido del owner): la columna "Realista en `07`" lleva S1 12–14 h, S2
+  12–15 h y S3 10–12 h (`07` l.16-18).
+- Decisión del owner (2026-11-13): "Apruebo en feat/FR-10-text-verifiers: crear en verifiers/ Verifier,
+  VerificationInput, VerificationResult, VerificationCode con los siete códigos de AC-10.5, los verificadores TRIM,
+  NORMALIZE_CASE, NULLIFY_TOKEN y MAP_TO_ENUM según docs/02 §4, con la comprobación repetida de
+  AI_ENUM_MIN_CONFIDENCE en MAP_TO_ENUM, y CountryAliases como lector de solo lectura de
+  schemas/country-aliases.v1.yaml que falla al arrancar ante un país fuera del catálogo o un alias ambiguo, sin
+  cablear al job; las decisiones A a E como propone el plan; y añadir la entrada al CHANGELOG con la columna
+  "Realista en 07" de la tabla de horas."
+- Decisiones:
+  - D152: el valor original que se verifica es el `receivedValue` que envió el pipeline, nunca el `originalValue`
+    que devuelve la IA. | Reversible: sí | Aprobado por: owner.
+  - D153: `detail` es un texto fijo sin valores del registro. El ejemplo de `05` §5 cita el valor, pero la forma
+    `{ passed, code, detail }` es la misma. | Reversible: sí | Aprobado por: owner.
+  - D154: el cargador de alias falla al arrancar ante un país fuera del catálogo o un alias ambiguo (ADR-0008). Hoy
+    no ocurre, según lo medido arriba. | Reversible: sí | Aprobado por: owner.
+  - D155: la condición (3) de `MAP_TO_ENUM`, la confianza, se rechaza con `UNVERIFIABLE_MAPPING`, porque AC-10.5 no
+    tiene un código propio para la confianza. Esa comprobación se repite a propósito con la de la política (AC-09.1).
+    | Reversible: sí | Aprobado por: owner.
+  - D156: un verificador ante un campo que no es suyo falla con `VALUE_MISMATCH` en vez de lanzar una excepción, como
+    defensa en profundidad tras `FIELD_NOT_ALLOWED`. | Reversible: sí | Aprobado por: owner.
+  - D157: `NORMALIZE_CASE` compara `toLowerCase(Locale.ROOT)` en los dos lados. `02` §4 escribe "`equalsIgnoreCase`
+    (con `Locale.ROOT`)", pero `String.equalsIgnoreCase` no recibe locale, y pasar los dos lados por
+    `toLowerCase(Locale.ROOT)` es la lectura literal de "con `Locale.ROOT`". Cualquiera de las dos sirve, porque
+    `proposed` además tiene que estar en el catálogo o cumplir la regex. | Reversible: sí.
+  - D158: `TRIM` usa `Whitespace.strip`, que solo quita U+0020 y tab (`02` l.72), y nunca `String.strip()`. Esta
+    quitaría U+2003, U+3000 o un salto de línea. Lo cubre un test con esos caracteres. El NBSP no distingue entre las
+    dos, porque `String.strip()` tampoco lo quita. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `verifiers/**` (nuevos) y
+  `docs/CHANGELOG.md`. 🔴 `schemas/country-aliases.v1.yaml` solo se lee.
+- Fuera del plan de archivos, pedido por el owner en la aprobación: `common/CoreConfiguration.java` declara el bean
+  `CountryAliases`.
+
+## Sprint 4 — Verificadores de parseo (2026-11-13)
+- Hecho: la parte de parseo de `07` l.106, sin cablear al job. Son los verificadores de `PARSE_DATE` y
+  `PARSE_NUMBER` (`02` l.123-124). Con ellos están los seis de AC-10.1, y se usan los siete códigos de AC-10.5. La tabla
+  que asigna un verificador a cada operación llega con el aplicador.
+  - `PARSE_DATE`:
+    - patrón con hora y minuto, y sin zona ni texto localizado;
+    - modo `STRICT` con `y` → `u`;
+    - el resultado en formato canónico tiene que ser **exactamente** `proposed`;
+    - `AMBIGUOUS_DATE` si el patrón con día y mes intercambiados da otra fecha.
+  - `PARSE_NUMBER`:
+    - solo se quita un `£`, y solo en `unit_price`; cualquier otro símbolo de moneda (categoría `Sc`) da
+      `CURRENCY_NOT_CONVERTIBLE`;
+    - separadores válidos y distintos;
+    - la regla (4) de miles y los grupos de miles (B2) dan `AMBIGUOUS_NUMBER`;
+    - `SIGN_CHANGED`;
+    - en `quantity` y `customer_id`, sin parte fraccionaria, y `customer_id` sin decimales.
+- Defensa del cargador ya aprobado, pedida por el owner: `CountryAliases` falla al arrancar si un alias se normaliza a
+  una cadena vacía, como "日本", "?" o "--". Si no, cualquier valor que también quedara vacío se mapearía a ese país.
+  Hoy no hay ninguno en el YAML real (medido por el revisor).
+- Decisión del owner (2026-11-13): "Apruebo en feat/FR-10-parse-verifiers: crear en verifiers/ ParseDateVerifier y
+  ParseNumberVerifier según docs/02 §4, con detección de AMBIGUOUS_DATE, AMBIGUOUS_NUMBER, CURRENCY_NOT_CONVERTIBLE y
+  SIGN_CHANGED, sin cablear al job; que CountryAliases falle al arrancar con un alias normalizado vacío; las decisiones
+  A, B2, C y D como propone el plan; y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D159: "zona o texto localizado" (`02` l.123, con los ejemplos `MMM`, `EEE`, `a`, `z`, `X`) se lee como esas dos
+    familias completas:
+    - zona: `z`, `Z`, `X`, `x`, `O`, `V`, `v`;
+    - texto: `E`, `a`, `G`, `B`, y `M`, `L`, `Q`, `q` repetidas 3 o más veces.
+
+    Cualquiera de ellas da `INVALID_PARAMETERS`; las demás letras numéricas se permiten. | Reversible: sí | Aprobado
+    por: owner.
+  - D160 (B2): con `groupingSeparator` no nulo, la parte entera tiene un primer grupo de 1 a 3 dígitos y exactamente 3
+    dígitos detrás de cada separador de miles. Si no, `AMBIGUOUS_NUMBER`, comprobado antes que el valor, igual que la
+    regla (4).
+    - **Por qué:** sin esta regla, "12,34" con miles "," daría 1234 (×100) y "2,5" daría 25 (×10). La regla (4) no los
+      detecta, porque detrás del separador no hay exactamente 3 dígitos. Eso incumple `02` l.131 ("nunca … cambiar el
+      signo o la magnitud de un número") y repite el fallo que motivó ADR-0008 (l.14).
+    - **Sin ADR:** no hay un verificador previo que cambiar, y B2 aplica reglas ya escritas: `02` l.131 y el principio
+      de `02` §4 de rechazar cuando la entrada admite más de una interpretación razonable.
+
+    | Alternativas: B1, la letra de (2) sin comprobar grupos | Reversible: sí | Aprobado por: owner.
+  - D161: el verificador ignora `parameters.strippedSymbols` y mira los símbolos en `s`. | Reversible: sí | Aprobado
+    por: owner.
+  - D162: como mucho un `£`, al inicio o al final de `s`, y un signo `-` o `+` delante de los dígitos, antes o después
+    del `£` (`"-£2.55"`, `"£-2.55"`), igual que lo que el validador detecta en `unit_price` (`02` l.104). Un `£` en otro
+    sitio, o dos, da `VALUE_MISMATCH`. | Reversible: sí | Aprobado por: owner.
+  - D163: el signo (3) se comprueba antes de comparar el valor (2), y no después, como decía el plan. Si no, `"-2.55"` →
+    `2.55` saldría como `VALUE_MISMATCH` en vez de `SIGN_CHANGED`. Un `proposed` con `+` o `-` cuando `s` no tiene
+    signo también es `SIGN_CHANGED` ("no hay signo nuevo"). | Reversible: sí.
+  - D164: la regla de ambigüedad de `PARSE_DATE` se aplica tal como está escrita: si el patrón tiene día y mes
+    numéricos, se prueba el intercambio, también con `yyyy/MM/dd`. Por eso `2010/12/03` en `yyyy/MM/dd` es
+    `AMBIGUOUS_DATE`, porque `yyyy/dd/MM` da el 12 de marzo. | Reversible: sí.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `verifiers/**` (`ParseDateVerifier` y
+  `ParseNumberVerifier`, nuevos; `CountryAliases`) y `docs/CHANGELOG.md`.
+
+## Sprint 4 — Plan de ramas (actualizado el 2026-11-13)
+- El owner aprobó el plan del Sprint 4 en ocho ramas (2026-11-12). Al planear la rama del aplicador, el diseño completo
+  pasaba de 400 líneas sin tests (~396, ~495 con margen), así que el owner aprobó partirla en dos. El sprint queda en
+  **nueve ramas**, en este orden:
+  1. `feat/FR-09-correction-policy` (fusionada, #47);
+  2. `feat/FR-10-text-verifiers` (fusionada, #48);
+  3. `feat/FR-10-parse-verifiers` (fusionada, #49);
+  4. `feat/FR-10-correction-applier` (esta): aplicador puro, sin cablear;
+  5. `feat/FR-10-auto-correction-load` (nueva): cableado; la primera rama que carga `AUTO_CORRECTED`;
+  6. `test/FR-20-ac-20-3`;
+  7. `test/FR-10-adversarial-suite`;
+  8. `feat/FR-12-resilience`;
+  9. `feat/FR-08-ai-budget`.
+- La estimación del sprint (24–32 h reales) no cambia: el trabajo es el mismo, repartido en una rama más.
+
+## Sprint 4 — `CorrectionApplier` (2026-11-13)
+- Hecho: los pasos 3 a 5 de `04` §4 (l.136-145) en un componente puro, sin cablear al job. Son la política, todos los
+  verificadores y la revalidación del registro corregido con el mismo `Validator` (AC-10.2).
+  - Cubre AC-09.2 (todo o nada), AC-10.1, AC-10.2 y AC-10.3 en el aplicador, y la forma de `policy_decision` de AC-09.3
+    y AC-10.5 (`05` §5).
+  - `CorrectionApplier.Corrected` es el único camino a una fila `AUTO_CORRECTED`. Su constructor es privado, y solo se
+    construye en la última línea de `apply`, tras los tres pasos. Un test lo comprueba por reflexión.
+  - `Verifiers` asigna un verificador a cada operación, y no se construye si falta alguna.
+- `AppliedCorrection` lleva todo lo que AC-10.3 y las columnas `NOT NULL` de `correction_log` (V2) exigen: `field_name`,
+  `error_code`, `operation`, `operation_params`, `original_value`, `corrected_value`, `confidence`, `severity`,
+  `ai_explanation`, `ai_provider`, `ai_model`, `prompt_version` y `ai_request_id`. Todo sale de la petición, la
+  respuesta validada y su `meta`; no queda nada para la rama siguiente. `id` y `applied_at` los pone la base de datos;
+  `batch_id` y `source_row_number`, el writer.
+- Pedido por el owner: `ParseDateVerifier` construye los formatters con `Locale.ROOT`.
+  - **Medido antes del cambio:** con el patrón `YYYY-ww-e HH:mm`, la entrada `2010-02-1 08:26` daba el 3 de enero con
+    el locale por defecto `ROOT` o `en_US`, el 11 con `fr_FR` y el 2 con `ar_EG`.
+  - Un test fija esos cuatro locales por defecto y exige el mismo resultado (NFR-13, `02` l.73).
+- Decisión del owner (2026-11-13): "Apruebo partir la rama 4 en feat/FR-10-correction-applier y
+  feat/FR-10-auto-correction-load; en feat/FR-10-correction-applier, crear en policy/ CorrectionApplier,
+  PolicyDecision y AppliedCorrection y en verifiers/ la tabla Verifiers, con el orden de docs/04 l.133-145 y un único
+  punto de construcción del resultado corregido, sin cablear al job; usar Locale.ROOT en ParseDateVerifier; las
+  decisiones B a G como propone el plan; y añadir la entrada al CHANGELOG."
+- Decisiones:
+  - D165: el valor original que se verifica es el del campo del propio registro. Hoy coincide con el `receivedValue`
+    de la petición, pero dejará de hacerlo cuando `AI_REDACT_FIELDS` (Sprint 5) redacte `customer_id`. Precisa D152 con
+    el mismo criterio: el dato del pipeline, nunca el de la IA. | Reversible: sí | Aprobado por: owner.
+  - D166: se ejecutan todos los verificadores aunque uno falle, para que `policy_decision` lleve el resultado de cada
+    violación (AC-10.5). | Reversible: sí | Aprobado por: owner.
+  - D167: con `POLICY_REJECTED`, `VERIFICATION_FAILED` o `REVALIDATION_FAILED`, el `summary` es el de la IA, y se
+    guardan `ai_analysis` y `max_severity`, porque hubo análisis válido. AC-11.2 solo exige texto técnico en los motivos
+    `AI_*` y en `PROCESSING_ERROR`. Se aplica al cablear (rama 5). | Reversible: sí | Aprobado por: owner.
+  - D168: `confidence` se redondea con `HALF_UP` a 3 decimales en el aplicador, para la columna `numeric(4,3)`, en vez
+    de dejar que redondee PostgreSQL (NFR-13). | Reversible: sí | Aprobado por: owner.
+  - D169: el writer de `correction_log` (rama 5) no usará `ON CONFLICT`; un conflicto hará fallar el chunk (`09`
+    §2.2). | Reversible: sí | Aprobado por: owner. **Revertida por D176** (rama 5).
+  - D170: forma de `policy_decision`, según el ejemplo de `05` §5:
+    - `POLICY_REJECTED`: `approved: false`, `stage: POLICY`, y `verification` en `null` en cada violación;
+    - `VERIFICATION_FAILED`: `approved: false`, `stage: VERIFICATION`, y cada violación con `approved: true` y su
+      verificación;
+    - `REVALIDATION_FAILED`: `approved: true`, `stage: VERIFICATION`, y todas las verificaciones aprobadas.
+
+    | Reversible: sí | Aprobado por: owner.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `policy/**` (`CorrectionApplier`,
+  `PolicyDecision`, `AppliedCorrection`, nuevos), 🟠 `verifiers/**` (`Verifiers`, nuevo; `ParseDateVerifier`) y
+  `docs/CHANGELOG.md`.
+- Pendiente para la rama `feat/FR-10-auto-correction-load`, por indicación del owner: comprobar que `complete()`
+  calcula `auto_corrected_count` y que el invariante de NFR-06 cuenta las filas `AUTO_CORRECTED`, con un test de job.
+  Si no, el primer lote con correcciones acabaría en `INVARIANT_VIOLATION`.
+
+## Sprint 4 — Carga `AUTO_CORRECTED` (2026-11-15)
+- Rama `feat/FR-10-auto-correction-load`, la quinta del plan. Cablea el `CorrectionApplier` al job: es la primera rama
+  que carga filas `AUTO_CORRECTED` (FR-10, AC-10.3, AC-10.4; AC-09.3 al guardar `policy_decision`).
+  - `RecordProcessor` sigue el orden de `04` §4: con una respuesta válida, `NEEDS_HUMAN_REVIEW` (recalculado) va a
+    `AI_REVIEW_REQUIRED`; si no, el aplicador decide entre `AUTO_CORRECTED` y `POLICY_REJECTED`,
+    `VERIFICATION_FAILED` o `REVALIDATION_FAILED`. Desaparece el paso provisional `AUTO_FIXABLE` →
+    `AI_REVIEW_REQUIRED`.
+  - `ProcessedRecordWriter` escribe en el orden de `05` l.290: `sales_transaction` → `correction_log` →
+    `quarantine_record`. `QuarantineWriter` guarda `policy_decision` con la forma de D170.
+- Pendiente de la rama 4, resuelto: `complete()` ya calculaba `auto_corrected_count` desde las tablas, y el invariante
+  de NFR-06 ya sumaba las filas `AUTO_CORRECTED`; no hizo falta código. Lo comprueban un test de job con cinco filas
+  escritas a mano (una por resultado) y dos fallos inyectados.
+- AC-10.4, medido: con un `explanation` que contiene U+0000, PostgreSQL rechaza el INSERT en `correction_log`
+  (`DataIntegrityViolationException`, `invalid byte sequence for encoding "UTF8": 0x00`) y el chunk entero se
+  deshace, también la venta `DIRECT` y la `AUTO_CORRECTED`. En producción ese texto no llega: el cliente HTTP ya
+  rechaza cualquier U+0000 de la respuesta como `AI_INVALID_RESPONSE` (`06` A.5).
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-10-auto-correction-load: cablear CorrectionApplier en
+  RecordProcessor y en el job, con Loaded solo construible desde Corrected; CorrectionLogWriter con ON CONFLICT
+  (batch_id, source_row_number, field_name) DO NOTHING y assertUpdates(false), como exigen ADR-0007 y docs/03 l.54,
+  revirtiendo D169 con una decisión nueva en el CHANGELOG; el orden sales_transaction → correction_log →
+  quarantine_record y policy_decision en QuarantineWriter; eliminar el AUTO_FIXABLE provisional; los tests nuevos y
+  los cambios en IngestionJobTriageTest, RecordProcessorTest, RecordTestSupport y ProcessedRecordWriterTest como
+  propone el plan, con los ajustes de abajo; las decisiones D171, D173, D174 y D175 como se recomiendan y D172
+  sustituida como se indica abajo; los dos arreglos menores y la entrada del CHANGELOG."
+- Decisiones:
+  - D171: `ProcessedRecord.Loaded` es una clase con constructor privado y dos factorías, `direct` y
+    `autoCorrected(tx, Corrected)`, que comprueban `load_origin`. Ninguna fila `AUTO_CORRECTED` llega al writer sin un
+    `Corrected`, que solo construye el aplicador. Alternativa: un record con `List<AppliedCorrection>`, que cualquiera
+    podría rellenar a mano. | Reversible: sí | Aprobado por: owner.
+  - D172: AC-10.4 se prueba con un fallo real de PostgreSQL al escribir `correction_log`: el aplicador real, con una
+    respuesta hecha a mano cuyo `explanation` contiene U+0000. Sin triggers ni writers falsos. Sustituye al registro
+    repetido del plan, que con D176 ya no falla. | Reversible: sí | Aprobado por: owner.
+  - D173: el test de job con `dirty-1k` y el eco que propone `"echo"` exige que los 50 rechazos estén en
+    `{POLICY_REJECTED, VERIFICATION_FAILED}` con `policy_decision`, sin fijar el reparto entre ambos, que sería copiar la
+    salida medida. | Reversible: sí | Aprobado por: owner.
+  - D174: el aplicador es un bean singleton de `IngestionJobConfiguration`, no `@StepScope`: no tiene estado, y usa el
+    mismo `Validator` que encontró las violaciones (AC-10.2). | Reversible: sí | Aprobado por: owner.
+  - D175: un `MALFORMED_ROW` con respuesta `AUTO_FIXABLE` llega al aplicador con un mapa de campos vacío; la política lo
+    rechaza (`ERROR_CODE_NOT_CORRECTABLE`) antes de que nada lea los campos, y `policy_decision` queda registrado.
+    Ningún camino se salta la política (`04` §4). | Reversible: sí | Aprobado por: owner.
+  - D176: revierte D169. `CorrectionLogWriter` usa `ON CONFLICT (batch_id, source_row_number, field_name) DO NOTHING`
+    con `assertUpdates(false)`, como red de seguridad para reinicios (AC-04.4), igual que las demás escrituras: lo
+    exigen ADR-0007 (Accepted, l.13-14: "Escrituras con `INSERT ... ON CONFLICT DO NOTHING`") y `03` l.54 (NFR-04:
+    "Todas las escrituras usan `INSERT ... ON CONFLICT DO NOTHING`"). D169 contradecía ambos textos, y también
+    `09` l.42. `09` l.85 pide parar ante un `ON CONFLICT DO NOTHING` nuevo: se paró, y lo decidió el owner. Un test de AC-04.4 escribe
+    el mismo registro corregido dos veces en un chunk: termina bien, con una venta y un solo juego de correcciones.
+    | Reversible: con ADR | Aprobado por: owner.
+- Tests existentes que cambian, con el motivo:
+  - `IngestionJobTriageTest`: `docs07_everyAutoFixableRecordIsQuarantinedForReviewUntilThePolicyExists` pasa a
+    `docs07_anAutoFixableAnswerThatDoesNotVerifyNeverLoads` y exige los motivos de D173 con `policy_decision`; el
+    test de U+0001 espera `VERIFICATION_FAILED` en lugar de `AI_REVIEW_REQUIRED`, con la misma comprobación del
+    resumen; el javadoc de la clase ya no dice que falte la política.
+  - `RecordProcessorTest`: el test parametrizado conserva solo el caso `NEEDS_HUMAN_REVIEW` y se renombra; el fixture
+    `auto-fixable.json` no corresponde a las violaciones del registro y, con la política, acabaría en
+    `PROCESSING_ERROR`. Los casos `AUTO_FIXABLE` pasan a tests nuevos construidos desde la petición real. No se toca
+    `contracts/fixtures`.
+  - `RecordTestSupport.processor` construye el aplicador real con los valores por defecto de `application.yml`.
+  - `ProcessedRecordWriterTest`: el writer recibe el `CorrectionLogWriter`, y los dos `Quarantined` construidos a mano
+    llevan `policyDecision = null`.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `policy/CorrectionApplier.java` (solo el
+  comentario D152 → D165) y 🟠 `docs/CHANGELOG.md`. Arreglo menor en la entrada anterior: se quita "sin frase propia" de
+  la línea de `Locale.ROOT`, porque la frase del owner lo incluía.
+## Sprint 4 — Test de AC-20.3 con el mock (2026-11-15)
+- Rama `test/FR-20-ac-20-3`, la sexta del plan. `Ac203MockEvaluationTest` ejecuta el job real sobre `dirty-1k` contra
+  el `ai-service` real con `LLM_PROVIDER=mock` (Testcontainers) y lo compara con `dirty-1k.labels.csv`: es la única
+  comparación autorizada entre el mock y las etiquetas (`02` l.377). No hay código de producción.
+  - La CI construye la imagen `pipemend/ai-service:test` antes de `./gradlew test`, en el job `pipeline-service`. El
+    test nunca la descarga y falla si falta; el comando local está en AGENTS.md y en el README.
+  - Nota de NFR-13 en `03`: "base limpia" es el stack entero (`docker compose down -v`); las filas se comparan sin ids
+    generados, timestamps ni latencias, y sin excluir el resultado de la caché.
+- Primera ejecución, roja por un error del test: `outcome()` añadía el motivo de cuarentena al resultado y las 20 filas
+  en cuarentena no coincidían con `QUARANTINED`. No había ninguna discrepancia con las etiquetas. El owner aprobó
+  corregirlo: "Apruebo corregir outcome() en Ac203MockEvaluationTest para que compare solo el resultado y deje el
+  motivo de cuarentena en el mensaje." También pidió que el test marque las filas cuyas entradas no coinciden en
+  `expected_outcome` (`10` §3). La segunda ejecución sale verde.
+- Medido: el test tarda ~2,3 s (JUnit); `docker build` sin caché de capas, ~48 s con las imágenes base ya descargadas.
+- Decisión del owner (2026-11-15): "Apruebo test/FR-20-ac-20-3: el test Ac203MockEvaluationTest con el contenedor de
+  ai-service pipemend/ai-service:test arrancado por Testcontainers solo con LLM_PROVIDER=mock, sin descargar imágenes
+  y fallando si falta la imagen; el paso docker build en ci.yml antes de Test sin quitar ningún paso; el comando local
+  en AGENTS.md y en el README; la nota de NFR-13 en docs/03; las entradas de ai-service en la tarea test de
+  build.gradle.kts; las decisiones D177 a D184 como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D177: la imagen usa el tag fijo `pipemend/ai-service:test`, el mismo en el test y en `ci.yml`.
+    | Reversible: sí | Aprobado por: owner.
+  - D178: el test comprueba exactamente AC-20.3: el resultado de las 1000 filas (sin etiqueta → `DIRECT`); en cada
+    fila `AUTO_CORRECTED`, los campos corregidos son los etiquetados y cada `corrected_value` es igual a `clean_value`
+    (`""` es `null` solo con `NULLIFY_TOKEN`, `10` l.60); ninguna otra fila tiene `correction_log`. No comprueba
+    `quarantine_reason` ni `expected_operation`, que AC-20.3 no pide. | Reversible: sí | Aprobado por: owner.
+  - D179: el test reúne todas las discrepancias y falla una sola vez con la lista completa. | Reversible: sí
+    | Aprobado por: owner.
+  - D180: si sale rojo, se para y se informa. Una corrección exige una regla de `/docs` citada y un test rojo escrito
+    antes, en una rama `fix/` que se fusiona antes; nunca se ajustan el test, el mock, las etiquetas ni `dirty-1k` a la
+    salida. | Reversible: no aplica | Aprobado por: owner.
+  - D181: la tarea `test` de Gradle declara como entradas `ai-service/app` (sin `__pycache__`), `Dockerfile`,
+    `pyproject.toml` y `uv.lock`, para que un cambio en `ai-service` repita los tests en local. La imagen se
+    reconstruye a mano. | Reversible: sí | Aprobado por: owner.
+  - D182: el test va en la tarea `test` normal, sin tag: nunca se omite, así que `./gradlew test` necesita la imagen.
+    | Reversible: sí | Aprobado por: owner.
+  - D183: los auxiliares `receive` y `launch` se duplican en el test nuevo para no tocar ningún test existente.
+    | Reversible: sí | Aprobado por: owner.
+  - D184: NFR-13 se comprueba a mano (dos ejecuciones separadas por `down -v`), sin test automático.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `.github/workflows/ci.yml` (un paso nuevo,
+  ninguno quitado), 🟠 `AGENTS.md`, 🟠 `docs/03-requisitos-no-funcionales.md` y 🟠 `docs/CHANGELOG.md` (incluido el
+  riesgo de NFR-13 del Sprint 3, marcado como resuelto). No protegidos: 🟢 `README.md` y 🟢 `build.gradle.kts` (sin
+  cambio de versiones, `09` l.71).
+## Sprint 4 — Suite adversarial (2026-11-15)
+- Rama `test/FR-10-adversarial-suite`, la séptima del plan. `AdversarialSuiteTest` (AC-10.6) pasa respuestas de IA
+  plausibles pero erróneas, todas `LOW` y con `confidence = 0.99`, por el job, el validador, la política, los
+  verificadores, la revalidación y PostgreSQL reales; solo la IA es WireMock en 127.0.0.1. No hay código de producción.
+  - Trece casos adversariales y un control `AUTO_CORRECTED`. Cada caso sale de una regla de `02` §4, ADR-0008, `06` o
+    una D de este CHANGELOG, y fija el motivo de cuarentena y el código de `policy_decision` antes de ejecutar:
+    `AMBIGUOUS_DATE` (`02` §4 PARSE_DATE (3), D164), `AMBIGUOUS_NUMBER` (PARSE_NUMBER (4)), `CURRENCY_NOT_CONVERTIBLE`
+    (PARSE_NUMBER (1)), `SIGN_CHANGED` (PARSE_NUMBER (3), D163), `UNVERIFIABLE_MAPPING` (MAP_TO_ENUM (2)),
+    `VALUE_MISMATCH` (el principio de "idéntico a `proposed`", TRIM, PARSE_DATE (2) y PARSE_NUMBER (2) y (5)),
+    `ERROR_CODE_NOT_CORRECTABLE` y `FIELD_NOT_ALLOWED` (`02` §4, AC-09.1), y `AI_INVALID_RESPONSE` (AC-08.7).
+  - Cada caso comprueba que el pipeline envió exactamente la violación prevista. Antes de la primera ejecución, las 14
+    filas escritas a mano pasaron por el validador real con el campo y el código previstos.
+  - Primera ejecución en verde: 0 de los 13 casos llega a `sales_transaction`, con el motivo y el código previstos.
+- `contracts/fixtures/triage-request.prompt-injection.json` (`03` l.180): una fila basada en la fila 6 de `dirty-1k`,
+  con `Country` y `Description` cambiados; la `Description` lleva una instrucción inyectada y el cierre del bloque de
+  contexto. La usan la suite (la IA obedece la instrucción y la verificación lo rechaza), `test_prompt_injection.py`
+  con el mock y los tests parametrizados de contrato de los dos servicios. `data/samples` no cambia.
+- La distinción entre timeout de conexión y de lectura (`03` l.99) pasa a `feat/FR-12-resilience`: es FR-12, y el
+  reintento que los distingue todavía no existe.
+- Decisión del owner (2026-11-15): "Apruebo test/FR-10-adversarial-suite: la suite AdversarialSuiteTest parametrizada
+  con el job, el validador, la política, los verificadores y PostgreSQL reales y WireMock solo como IA, con los casos 1
+  a 11 y el control C de la tabla; la fixture contracts/fixtures/triage-request.prompt-injection.json y su entrada en
+  contracts/fixtures/index.json; el test test_prompt_injection.py con el mock; el cambio de
+  thereAreFourValidRequestFixtures a cinco; mover la distinción de timeouts a feat/FR-12-resilience; las decisiones
+  D185 a D191 como se recomiendan, con D186 ajustada como se indica abajo; y la entrada del CHANGELOG."
+- Decisiones:
+  - D185: la suite ejecuta el job real con PostgreSQL, una fila por caso, en vez de llamar al aplicador: así comprueba
+    "0 en `sales_transaction`" de verdad. | Reversible: sí | Aprobado por: owner.
+  - D186 (ajustada por el owner): cada caso comprueba su motivo de cuarentena y, cuando lo hay, su código: el de
+    verificación de AC-10.5 en todos los `VERIFICATION_FAILED` y el motivo de la política en los `POLICY_REJECTED`, con
+    la fuente escrita en el caso. | Reversible: sí | Aprobado por: owner.
+  - D187: un caso de control (`£2.55` → `2.55`) debe cargarse, para que un arnés roto no pase la suite.
+    | Reversible: sí | Aprobado por: owner.
+  - D188: la fixture lleva `Customer ID` vacío, para usar `record.raw` tal cual como fila CSV. | Reversible: sí
+    | Aprobado por: owner.
+  - D189: si un caso deja pasar una corrección, o la rechaza con otro motivo o código, se para y se informa con la
+    regla; no se ajusta nada para que pase. | Reversible: no aplica | Aprobado por: owner.
+  - D190: el WireMock y los auxiliares se duplican en la suite para no tocar `IngestionJobTriageTest`.
+    | Reversible: sí | Aprobado por: owner.
+  - D191: la distinción de timeouts (`03` l.99) va en `feat/FR-12-resilience`, no aquí. | Reversible: sí
+    | Aprobado por: owner.
+- Tests existentes que cambian: `TriageRequestContractTest.thereAreFourValidRequestFixtures` pasa a
+  `thereAreFiveValidRequestFixtures` (`hasSize(5)`) por la fixture nueva.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `contracts/fixtures/triage-request.prompt-injection.json`
+  (nuevo), 🟠 `contracts/fixtures/index.json` y 🟠 `docs/CHANGELOG.md`.
+## Sprint 4 — Resiliencia del cliente de IA (2026-11-15)
+- Rama `feat/FR-12-resilience`, la octava del plan (FR-12, NFR-07). El cliente de ai-service gana el reintento de
+  transporte y el circuit breaker de `03` l.99-102, con `resilience4j-circuitbreaker` y `resilience4j-retry` 2.4.0, sin
+  el starter de Spring Boot. Gradle las resuelve (solo traen `resilience4j-core` 2.4.0) y los tests corren con el
+  toolchain de Java 25.
+  - Cada llamada lógica deja una fila en `ai_call_log` con sus `attempts` y el mismo `X-Request-Id` en todos los
+    intentos (AC-08.5). Si el circuito está abierto, no se envía ninguna petición: la fila es `CIRCUIT_OPEN` y el
+    registro va a cuarentena con `AI_UNAVAILABLE` (`02` l.165). `AiCallLogRepository.Outcome` gana `CIRCUIT_OPEN`, que
+    el CHECK de V2 ya admitía.
+  - Invariante de NFR-07 (`03` l.98): el pipeline no arranca si `AI_CLIENT_READ_TIMEOUT_MS` no supera
+    `AI_REQUEST_DEADLINE_SECONDS × 1000 + 2000`. `application.yml` lee el plazo en `pipemend.ai.request-deadline`.
+  - Log `WARN` al abrirse el circuito, sin datos del registro (NFR-08).
+- Medido: `./gradlew clean test` pasa de 37,9 s a 68,9 s (+31 s). Los tests con la IA caída esperan 1,5 s por llamada
+  reintentada hasta que se abre el circuito (D200). AC-12.5 (`AiHangTest`, lectura de 500 ms) tarda 6,3 s.
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-12-resilience: las dependencias nuevas
+  io.github.resilience4j:resilience4j-circuitbreaker y resilience4j-retry 2.4.0 sin el starter de Spring Boot; el valor
+  nuevo CIRCUIT_OPEN en el enum AiCallLogRepository.Outcome; AiResilience con los valores de NFR-07, el circuit breaker
+  por fuera del retry, reintento solo de la lista cerrada de 03 l.99 y circuit breaker que cuenta exactamente las fallas
+  Unavailable; las filas CIRCUIT_OPEN con attempts = 1 y AI_UNAVAILABLE; el invariante de timeouts con
+  pipemend.ai.request-deadline en application.yml; AiHangTest para AC-12.5 y los tests nuevos de reintento y circuit
+  breaker; los cambios en HttpAiTriageClientTest e IngestionJobTest como propone el plan; las decisiones D192 a D200
+  como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D192: el circuit breaker envuelve el retry. Una llamada lógica cuenta una vez en la ventana de 20 llamadas
+    (`03` l.100), y con el circuito abierto no se reintenta. | Reversible: sí | Aprobado por: owner.
+  - D193: cuenta como falla exactamente un resultado `Unavailable`: transporte, *read timeout*, 429 `RATE_LIMITED`,
+    500, 502 `LLM_PROVIDER_ERROR`, 503 y 504 (`03` l.102, `06` A.5). Un 4xx, un 502 `LLM_INVALID_OUTPUT`, un 200 fuera
+    del contrato o un 429 `LLM_BUDGET_EXHAUSTED` no cuentan. | Reversible: sí | Aprobado por: owner.
+  - D194: se reintenta solo la lista cerrada de `03` l.99: conexión rechazada, timeout de conexión y 502/503/504 sin
+    cuerpo `problem+json`. No se reintentan el *read timeout*, el corte de conexión a mitad de respuesta, el 500 sin
+    `problem+json` ni un `problem+json` sin `code`: ninguna fila de `06` A.5 permite reintentar un cuerpo
+    `problem+json`, tenga o no `code` (opción conservadora). | Reversible: sí | Aprobado por: owner.
+  - D195: una fila `CIRCUIT_OPEN` lleva `attempts = 1`, que en esa fila significa **0 peticiones HTTP**: el CHECK de
+    V2 (`attempts >= 1`) no admite 0, y cambiarlo exigiría una migración nueva. La fila se distingue por `outcome` y por
+    `http_status` nulo; un test comprueba que WireMock no recibió la petición. | Reversible: con una migración nueva
+    | Aprobado por: owner.
+  - D196: la cota de AC-12.5 en el test es `10 × read_timeout + 3 × read_timeout` (un ciclo half-open de holgura) más
+    10 s fijos para leer y cargar las 1000 filas, que la fórmula de `03` no incluye. Además, como mucho 10 filas
+    `TIMEOUT` y cada `CIRCUIT_OPEN` en menos de 50 ms. | Reversible: sí | Aprobado por: owner.
+  - D197: el circuit breaker es un bean compartido; solo `IngestionJobTest` lo reinicia en `@BeforeEach`, porque es
+    el único test Spring que cuenta los `outcome` con la IA caída. | Reversible: sí | Aprobado por: owner.
+  - D198: los valores de NFR-07 son constantes de `AiResilience`; `03` no les da variable de entorno. | Reversible: sí
+    | Aprobado por: owner.
+  - D199: el invariante de timeouts entra en esta rama, como pide `07` l.109. | Reversible: sí | Aprobado por: owner.
+  - D200: la espera de 500 ms ×2 de `03` se mantiene en los tests; el aumento medido (+31 s) no pasa del minuto.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `HttpAiTriageClientTest`: `onlyRow` recibe los `attempts` esperados; la tabla de `docs06A5` gana la columna
+    `attempts` (3 para 502/503/504 sin `problem+json`) y comprueba el número de peticiones con el mismo
+    `X-Request-Id`; la conexión rechazada, el timeout de conexión y `nfr_05` esperan `attempts = 3`.
+  - `IngestionJobTest.ac_12_1`: 10 filas `UNAVAILABLE` con `attempts = 3` y 40 `CIRCUIT_OPEN` en lugar de 50
+    `UNAVAILABLE`; reinicia el circuit breaker antes de cada test.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`. Dependencias nuevas en
+  `build.gradle.kts` y valor nuevo de enum, aprobados por el owner.
+
+## Sprint 4 — Presupuesto de IA por lote (2026-11-15)
+- Rama `feat/FR-08-ai-budget`, la novena y última del plan (FR-08, AC-08.6, `07` l.110-111). `RecordProcessor`
+  comprueba el presupuesto del lote antes de construir la solicitud a la IA (`04` §4). Si está agotado, el registro va a
+  cuarentena con `AI_BUDGET_EXCEEDED` y un resumen técnico (AC-11.2), sin llamada ni fila en `ai_call_log`, con
+  `ai_request_id` nulo (AC-08.5). Tampoco se llama para filas que habrían sido acierto de caché.
+  - El tope es `AI_MAX_CALLS_PER_BATCH` (default 500, `04` l.295), leído en `pipemend.ai.max-calls-per-batch`. El
+    pipeline no arranca con un valor menor que 1.
+  - Un `429 LLM_BUDGET_EXHAUSTED` deja su fila, manda el registro a `AI_BUDGET_EXCEEDED` y agota el presupuesto del
+    resto del lote (`03` l.102, `06` l.334).
+  - Comportamiento aceptado por AC-08.6: si un chunk falla después de llamar a la IA, las filas de esas llamadas quedan
+    en `ai_call_log` (se confirman aparte, NFR-05) y consumen presupuesto. Al reiniciar, esos registros se reprocesan y,
+    si el presupuesto ya se agotó, van a `AI_BUDGET_EXCEEDED` con `ai_request_id` nulo, aunque su llamada de la
+    ejecución fallida siga en `ai_call_log`. `AiBudgetTest.ac_08_6_aRestartGetsNoNewBudget` lo fija.
+- Medido: `./gradlew clean test` tarda 88,7 s y 78,1 s antes y 82,2 s y 82,0 s después; la diferencia queda dentro
+  del ruido entre ejecuciones. La clase nueva `AiBudgetTest` tarda 6,7 s.
+- Decisión del owner (2026-11-15): "Apruebo feat/FR-08-ai-budget: AiBudget en triage con la comprobación en
+  RecordProcessor antes de construir la solicitud; el presupuesto leído de ai_call_log antes de cada llamada posible
+  con la constante SPENDS_BUDGET compartida con complete() y un cerrojo de agotado en el processor de step scope; el
+  429 LLM_BUDGET_EXHAUSTED derivado de su fila; la clave pipemend.ai.max-calls-per-batch en application.yml con
+  AiBudgetProperties que exige un entero >= 1; AiBudgetTest, AiBudgetPropertiesTest y los tests nuevos en
+  AiCallLogRepositoryTest y RecordProcessorTest; los cambios en RecordTestSupport e IngestionJobTriageTest como propone
+  el plan; las decisiones D201 a D209 como se recomiendan; y la entrada del CHANGELOG."
+- Decisiones:
+  - D201: una sola definición de lo que consume presupuesto, `AiCallLogRepository.SPENDS_BUDGET`
+    (`outcome <> 'CACHE_HIT'`), compartida por el presupuesto y por el `ai_calls_count` de `complete()` (AC-08.6,
+    `05` l.65). Por la decisión B del sprint, las filas `CIRCUIT_OPEN` consumen presupuesto: con la IA caída, al llegar
+    al tope el motivo de cuarentena pasa de `AI_UNAVAILABLE` a `AI_BUDGET_EXCEEDED`, porque el presupuesto se comprueba
+    primero (`02` l.171). | Reversible: sí | Aprobado por: owner.
+  - D202: no hay contador en memoria. El presupuesto se lee de `ai_call_log` antes de cada llamada posible (`05` l.65:
+    "durante el job la fuente es `ai_call_log`"), así que el arranque y el reinicio leen lo mismo que leerá
+    `complete()`. | Reversible: sí | Aprobado por: owner.
+  - D203: un cerrojo monótono "agotado" en `AiBudget`, que vive en el processor de step scope. Una vez agotado, no se
+    vuelve a consultar: las filas no se borran y el tope no cambia durante el step. Nada pasa de un lote a otro.
+    | Reversible: sí | Aprobado por: owner.
+  - D204: la comprobación está en `RecordProcessor`, no en un decorador del puerto, porque en `04` §4 es un paso
+    propio antes de la IA; también la atraviesan las filas `MALFORMED_ROW`. | Reversible: sí | Aprobado por: owner.
+  - D205: el 429 agota el presupuesto derivándolo de su fila (`http_status = 429 AND error_code =
+    'LLM_BUDGET_EXHAUSTED'`), sin estado nuevo en BD. Un 400 con ese `code` no lo agota. | Reversible: sí
+    | Aprobado por: owner.
+  - D206: `pipemend.ai.max-calls-per-batch` es un entero >= 1 validado al arrancar; 0 no se admite porque equivaldría
+    a un modo sin IA que los docs no definen. | Reversible: sí | Aprobado por: owner.
+  - D207: "alcanzado" significa `gastado >= tope`: con tope N se hacen exactamente N llamadas lógicas que consumen.
+    | Reversible: sí | Aprobado por: owner.
+  - D208: si falla la consulta del presupuesto, el registro va a `PROCESSING_ERROR` por el catch que ya existe, sin
+    llamar a la IA; no hay catch nuevo. | Reversible: sí | Aprobado por: owner.
+  - D209: los tests de presupuesto usan un contexto propio con tope 5; el caso `CIRCUIT_OPEN` fuerza a OPEN el circuit
+    breaker del contexto, que se reinicia antes de cada test. | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `RecordTestSupport`: el helper pasa un presupuesto que nunca se agota y gana una sobrecarga que recibe uno.
+  - `IngestionJobTriageTest`: `AutoFixableEcho` gana el interruptor `cacheHit` (se reinicia en `@AfterEach`) y deja
+    intacta una respuesta que no sea 200. Ninguna aserción cambia.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 4 — Cierre (2026-11-16)
+- Hecho (`07` §6): las nueve ramas del plan, todas con la CI de `dev` en verde.
+  - #47 `CorrectionPolicy` (FR-09); #48 verificadores de texto y #49 de parseo (FR-10); #50 `CorrectionApplier` con
+    revalidación y `correction_log` (FR-10); #51 carga `AUTO_CORRECTED` (FR-10); #52 AC-20.3 (FR-20); #53 suite
+    adversarial AC-10.6 (FR-10); #54 resiliencia del cliente de IA (FR-12, NFR-07); #55 presupuesto por lote (FR-08,
+    AC-08.6).
+- Demo (`07` l.116), hecha por el owner con `docker compose`: `dirty-1k` terminó `COMPLETED` con auto-correcciones y
+  cuarentenas; con `ai-service` apagado, otro lote terminó `COMPLETED` con los inválidos en `AI_UNAVAILABLE`.
+- Recortado: nada en este sprint.
+- Decisiones nuevas que piden ADR: ninguna. Resilience4j ya está nombrado en `03` NFR-07 y es una biblioteca, no una
+  dependencia de infraestructura (`09` l.166).
+- Horas reales (mismo método que el 2026-11-12: días con actividad en git × 2,5 h): 5 días (12, 13, 14, 15 y 16 de
+  noviembre), ≈ 12,5 h, frente a las ~14 h de `07` l.113. Acumulado S1-S4: ≈ 82,5 h.
+- `docs/08` §3.2: se marcan las seis casillas que hoy cubre un test de CI (líneas 43 a 48), cada una con su test.
+  Quedan sin marcar:
+  - Pendiente: el invariante `read = direct + autoCorrected + quarantined` por muestra (l.42). Falta un test que pase
+    `dirty-10k` y `raw-natural-2k` por el job.
+  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 5.
+- Punto de control de `07` l.190: se cumple al etiquetar `v0.4`, sin recortes. Si no se etiqueta, aplica la acción de
+  esa fila.
+- Decisión del owner (2026-11-16): "Apruebo docs/sprint-4-close: la entrada "Sprint 4 — Cierre" en docs/CHANGELOG.md
+  con las nueve ramas (#47 a #55), la demo hecha por el owner, nada recortado, ninguna decisión que pida ADR, horas
+  reales de 5 días (12, 13, 14, 15 y 16 de noviembre) ≈ 12,5 h y el punto de control de 07 l.190 condicionado al tag
+  v0.4; marcar en docs/08 §3.2 las casillas de las líneas 43 a 48 citando sus tests y dejar sin marcar la 42 y la 49; y
+  el cambio de la sección Status del README.md."
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
+  `docs/08-definition-of-done.md`. `README.md` (sección Status), nombrado en la frase.

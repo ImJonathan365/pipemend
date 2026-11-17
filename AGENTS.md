@@ -68,7 +68,9 @@ Conventions (docs/09 §6):
 
 Commands:
 - Run all: `cp .env.example .env && docker compose up --build`
-- Pipeline tests: `cd pipeline-service && ./gradlew test`   # Gradle Kotlin DSL, Java 25 toolchain (ADR-0006)
+- Pipeline tests: `docker build -t pipemend/ai-service:test ai-service && cd pipeline-service && ./gradlew test`
+  # Gradle Kotlin DSL, Java 25 toolchain (ADR-0006). The AC-20.3 test needs that image and fails without it;
+  # rebuild it after any ai-service change.
 - AI tests: `cd ai-service && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy app`
 - Dataset tools: `cd tools && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy .`
 - Dataset prep: `uv run --project tools python tools/download_dataset.py all`   # docs/10 §2

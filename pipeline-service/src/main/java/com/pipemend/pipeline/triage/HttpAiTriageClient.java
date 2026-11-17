@@ -5,6 +5,8 @@ import com.pipemend.pipeline.persistence.AiCallLogRepository.Outcome;
 import com.pipemend.pipeline.triage.contract.TriageJson;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
 import com.pipemend.pipeline.triage.contract.TriageResponse;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.retry.Retry;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
@@ -27,9 +29,10 @@ import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * POST /v1/triage (FR-08) and the docs/06 A.5 table that turns each answer into a {@link TriageOutcome}. Every call, also a
- * failed one, leaves one row in ai_call_log (AC-08.5). Retries and the circuit breaker come in Sprint 4 (docs/07), so
- * attempts is always 1. The body of a response never goes to the logs: it carries values of the row.
+ * POST /v1/triage (FR-08) and the docs/06 A.5 table that turns each answer into a {@link TriageOutcome}. Every logical
+ * call, also a failed one or one the open circuit breaker refuses, leaves one row in ai_call_log with its attempts
+ * (AC-08.5). The circuit breaker wraps the retries, so a logical call counts once in its window (NFR-07). The body of a
+ * response never goes to the logs: it carries values of the row.
  */
 public final class HttpAiTriageClient implements AiTriagePort {
 
@@ -70,12 +73,39 @@ public final class HttpAiTriageClient implements AiTriagePort {
 
     private record Received(int status, @Nullable MediaType contentType, String body) {}
 
+    /** One HTTP attempt: an answer of any status, or a transport failure. */
+    private sealed interface Attempt {
+        boolean retryable();
+    }
+
+    private record Answered(Received received) implements Attempt {
+        @Override
+        public boolean retryable() {
+            return AiResilience.retries(received.status(), received.contentType());
+        }
+    }
+
+    private record Failed(ResourceAccessException error) implements Attempt {
+        @Override
+        public boolean retryable() {
+            return AiResilience.retries(cause(error));
+        }
+    }
+
     private final RestClient rest;
     private final JsonMapper json;
     private final AiCallLogRepository callLog;
+    private final CircuitBreaker circuit;
+    private final Retry retry;
+
+    /** With a circuit breaker of its own, as every test client that builds one. */
+    public HttpAiTriageClient(AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog) {
+        this(properties, json, callLog, AiResilience.circuitBreaker());
+    }
 
     /** @param json the JsonMapper of Boot, the one the contract tests check the request against */
-    public HttpAiTriageClient(AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog) {
+    public HttpAiTriageClient(
+            AiClientProperties properties, JsonMapper json, AiCallLogRepository callLog, CircuitBreaker circuit) {
         HttpClient http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(properties.connectTimeout())
@@ -89,14 +119,46 @@ public final class HttpAiTriageClient implements AiTriagePort {
                 .build();
         this.json = json;
         this.callLog = callLog;
+        this.circuit = circuit;
+        this.retry = Retry.of("ai-service", AiResilience.retryConfig(Attempt::retryable));
     }
 
     @Override
     public TriageOutcome triage(TriageRequest request) {
         long start = System.nanoTime();
-        Received received;
+        if (!circuit.tryAcquirePermission()) {
+            // attempts is 1 only because V2 has CHECK (attempts >= 1): no HTTP request was sent (D195).
+            save(request, Outcome.CIRCUIT_OPEN, null, null, 1, elapsedMs(start), null, null);
+            return new TriageOutcome.Unavailable("the circuit breaker towards ai-service is open");
+        }
+        TriageOutcome outcome;
         try {
-            received = rest.post()
+            int[] attempts = {0};
+            Attempt last = Retry.decorateSupplier(retry, () -> {
+                        attempts[0]++;
+                        return attempt(request);
+                    })
+                    .get();
+            outcome = switch (last) {
+                case Failed failed -> transportFailure(request, failed.error(), attempts[0], elapsedMs(start));
+                case Answered answered
+                when answered.received().status() == 200 ->
+                    answer(request, answered.received(), attempts[0], elapsedMs(start));
+                case Answered answered -> httpFailure(request, answered.received(), attempts[0], elapsedMs(start));
+            };
+        } catch (RuntimeException e) {
+            // Not an answer of ai-service (a failed ai_call_log write, NFR-03): the caller sees it, the breaker does
+            // not.
+            circuit.releasePermission();
+            throw e;
+        }
+        circuit.onResult(System.nanoTime() - start, TimeUnit.NANOSECONDS, outcome);
+        return outcome;
+    }
+
+    private Attempt attempt(TriageRequest request) {
+        try {
+            return new Answered(rest.post()
                     .uri(TRIAGE_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .header(REQUEST_ID_HEADER, request.requestId().toString())
@@ -105,23 +167,18 @@ public final class HttpAiTriageClient implements AiTriagePort {
                     .exchange((sent, response) -> new Received(
                             response.getStatusCode().value(),
                             contentType(response.getHeaders()),
-                            new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8)));
+                            new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8))));
         } catch (ResourceAccessException e) {
-            return transportFailure(request, e, elapsedMs(start));
+            return new Failed(e);
         }
-        int latencyMs = elapsedMs(start);
-        if (received.status() == 200) {
-            return answer(request, received, latencyMs);
-        }
-        return httpFailure(request, received, latencyMs);
     }
 
-    private TriageOutcome answer(TriageRequest request, Received received, int latencyMs) {
+    private TriageOutcome answer(TriageRequest request, Received received, int attempts, int latencyMs) {
         TriageResponse response;
         try {
             response = TriageJson.parse(received.body());
         } catch (TriageJson.InvalidTriageJsonException e) {
-            return invalidAnswer(request, received, latencyMs, "is not valid against the contract");
+            return invalidAnswer(request, received, attempts, latencyMs, "is not valid against the contract");
         }
         // ai_analysis keeps the whole body, so all of it must fit in jsonb (docs/06 A.5).
         String unstorable;
@@ -132,31 +189,41 @@ public final class HttpAiTriageClient implements AiTriagePort {
             unstorable = HAS_HUGE_NUMBER;
         }
         if (unstorable != null) {
-            return invalidAnswer(request, received, latencyMs, unstorable);
+            return invalidAnswer(request, received, attempts, latencyMs, unstorable);
         }
         // ai_call_log.llm_calls is a smallint; ai-service never makes more than 3 (NFR-07).
         if (response.meta().llmCalls() > Short.MAX_VALUE) {
-            return invalidAnswer(request, received, latencyMs, "has llmCalls out of range");
+            return invalidAnswer(request, received, attempts, latencyMs, "has llmCalls out of range");
         }
         return switch (TriageResponseValidator.validate(request, response)) {
             case TriageResponseValidator.Result.Valid valid -> {
                 Outcome outcome = response.meta().cacheHit() ? Outcome.CACHE_HIT : Outcome.SUCCESS;
-                save(request, outcome, received.status(), null, latencyMs, null, response.meta());
+                save(request, outcome, received.status(), null, attempts, latencyMs, null, response.meta());
                 yield new TriageOutcome.Analysed(response, received.body(), valid);
             }
             case TriageResponseValidator.Result.Invalid invalid -> {
                 log.warn("ai-service answer {} failed the semantic check: {}", request.requestId(), invalid.issues());
-                yield invalidAnswer(request, received, latencyMs, "failed the semantic check " + invalid.issues());
+                yield invalidAnswer(
+                        request, received, attempts, latencyMs, "failed the semantic check " + invalid.issues());
             }
         };
     }
 
-    private TriageOutcome invalidAnswer(TriageRequest request, Received received, int latencyMs, String why) {
-        save(request, Outcome.INVALID_RESPONSE, received.status(), null, latencyMs, nonEmpty(received.body()), null);
+    private TriageOutcome invalidAnswer(
+            TriageRequest request, Received received, int attempts, int latencyMs, String why) {
+        save(
+                request,
+                Outcome.INVALID_RESPONSE,
+                received.status(),
+                null,
+                attempts,
+                latencyMs,
+                nonEmpty(received.body()),
+                null);
         return new TriageOutcome.InvalidResponse("The answer of ai-service " + why);
     }
 
-    private TriageOutcome httpFailure(TriageRequest request, Received received, int latencyMs) {
+    private TriageOutcome httpFailure(TriageRequest request, Received received, int attempts, int latencyMs) {
         int status = received.status();
         String code = problemCode(received);
         Kind kind;
@@ -173,7 +240,7 @@ public final class HttpAiTriageClient implements AiTriagePort {
             // 400, 404, 405, 422 and any other status outside the table: a contract bug, not an outage.
             kind = Kind.INVALID;
         }
-        save(request, outcome, status, code, latencyMs, nonEmpty(received.body()), null);
+        save(request, outcome, status, code, attempts, latencyMs, nonEmpty(received.body()), null);
 
         String detail =
                 "ai-service answered HTTP " + status + (code != null && KNOWN_CODES.contains(code) ? " " + code : "");
@@ -189,12 +256,13 @@ public final class HttpAiTriageClient implements AiTriagePort {
         };
     }
 
-    private TriageOutcome transportFailure(TriageRequest request, ResourceAccessException e, int latencyMs) {
-        Throwable cause = e.getCause() == null ? e : e.getCause();
+    private TriageOutcome transportFailure(
+            TriageRequest request, ResourceAccessException e, int attempts, int latencyMs) {
+        Throwable cause = cause(e);
         // HttpConnectTimeoutException is a subclass, so this covers the connect and the read timeout.
         boolean timeout = cause instanceof HttpTimeoutException;
         String type = cause.getClass().getName();
-        save(request, timeout ? Outcome.TIMEOUT : Outcome.UNAVAILABLE, null, null, latencyMs, type, null);
+        save(request, timeout ? Outcome.TIMEOUT : Outcome.UNAVAILABLE, null, null, attempts, latencyMs, type, null);
         return new TriageOutcome.Unavailable(
                 (timeout ? "ai-service did not answer in time: " : "ai-service is unreachable: ") + type);
     }
@@ -205,6 +273,7 @@ public final class HttpAiTriageClient implements AiTriagePort {
             Outcome outcome,
             @Nullable Integer httpStatus,
             @Nullable String errorCode,
+            int attempts,
             int latencyMs,
             @Nullable String errorDetail,
             TriageResponse.@Nullable Meta meta) {
@@ -215,7 +284,7 @@ public final class HttpAiTriageClient implements AiTriagePort {
                 outcome,
                 httpStatus,
                 errorCode,
-                1,
+                attempts,
                 meta == null ? null : meta.llmCalls(),
                 latencyMs,
                 meta == null ? null : meta.provider(),
@@ -281,6 +350,10 @@ public final class HttpAiTriageClient implements AiTriagePort {
         } catch (InvalidMediaTypeException e) {
             return null;
         }
+    }
+
+    private static Throwable cause(ResourceAccessException e) {
+        return e.getCause() == null ? e : e.getCause();
     }
 
     private static @Nullable String nonEmpty(String body) {

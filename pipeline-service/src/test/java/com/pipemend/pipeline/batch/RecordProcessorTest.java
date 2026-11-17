@@ -6,13 +6,17 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.pipemend.pipeline.batch.ProcessedRecord.QuarantineReason;
+import com.pipemend.pipeline.policy.PolicyDecision;
+import com.pipemend.pipeline.policy.RejectionReason;
 import com.pipemend.pipeline.schema.SchemaDefinition;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransaction.LoadOrigin;
+import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageResponseValidator;
 import com.pipemend.pipeline.triage.contract.Classification;
+import com.pipemend.pipeline.triage.contract.Operation;
 import com.pipemend.pipeline.triage.contract.Severity;
 import com.pipemend.pipeline.triage.contract.TriageJson;
 import com.pipemend.pipeline.triage.contract.TriageRequest;
@@ -202,12 +206,71 @@ class RecordProcessorTest {
         assertThat(q.summary()).contains("1 violation(s)").contains("country INVALID_ENUM_VALUE");
     }
 
+    static Stream<RawRecord> ac_08_6_aSpentBudgetQuarantinesWithoutCallingTheAi() {
+        return Stream.of(
+                new RawRecord.Parsed(6, unknownCountry()),
+                // docs/04 section 4: a malformed row reaches the budget check too.
+                new RawRecord.Malformed(7, "a,b", "Expected 8 columns, found 2", 8, 2));
+    }
+
     @ParameterizedTest
-    @CsvSource({
-        "triage-response.auto-fixable.json, AUTO_FIXABLE, LOW",
-        "triage-response.needs-human-review.json, NEEDS_HUMAN_REVIEW, HIGH"
-    })
-    void docs02Section5_everyValidAnalysisIsReviewedByAHumanUntilThePolicyExists(
+    @MethodSource
+    void ac_08_6_aSpentBudgetQuarantinesWithoutCallingTheAi(RawRecord record) {
+        AiTriagePort failIfCalled = request -> {
+            throw new AssertionError("a spent budget must not reach the AI");
+        };
+
+        ProcessedRecord result = RecordTestSupport.processor(
+                        BATCH, SchemaTestSupport.realSchema(), failIfCalled, new AiBudget(() -> true))
+                .process(record);
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(QuarantineReason.AI_BUDGET_EXCEEDED);
+            // AC-08.5: no call, so no ai_call_log row to point at.
+            assertThat(q.aiRequestId()).isNull();
+            assertThat(q.analysis()).isNull();
+            assertThat(q.summary()).startsWith("The AI call budget of the batch is exhausted. 1 violation(s): ");
+        });
+    }
+
+    @Test
+    void ac_08_6_withBudgetLeftTheAiIsCalled() {
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort capture = request -> {
+            sent.add(request);
+            return new TriageOutcome.Unavailable("captured");
+        };
+
+        RecordTestSupport.processor(BATCH, SchemaTestSupport.realSchema(), capture, new AiBudget(() -> false))
+                .process(new RawRecord.Parsed(6, unknownCountry()));
+
+        assertThat(sent).hasSize(1);
+    }
+
+    @Test
+    void ac_08_6_onceSpentTheBudgetIsNotAskedAgain() {
+        int[] asked = {0};
+        AiBudget budget = new AiBudget(() -> {
+            asked[0]++;
+            return true;
+        });
+        RecordProcessor spent = RecordTestSupport.processor(
+                BATCH,
+                SchemaTestSupport.realSchema(),
+                request -> {
+                    throw new AssertionError("a spent budget must not reach the AI");
+                },
+                budget);
+
+        spent.process(new RawRecord.Parsed(6, unknownCountry()));
+        spent.process(new RawRecord.Parsed(7, unknownCountry()));
+
+        assertThat(asked[0]).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"triage-response.needs-human-review.json, NEEDS_HUMAN_REVIEW, HIGH"})
+    void docs02Section5_aNeedsHumanReviewAnswerIsReviewedByAHuman(
             String fixture, Classification decision, Severity maxSeverity) throws IOException {
         String body = Files.readString(Path.of("..", "contracts", "fixtures", fixture));
         TriageResponse response = TriageJson.parse(body);
@@ -221,6 +284,92 @@ class RecordProcessorTest {
         assertThat(q.summary()).isEqualTo(response.summary());
         assertThat(q.analysis()).isEqualTo(new ProcessedRecord.AiAnalysis(body, maxSeverity));
         assertThat(q.aiRequestId()).isNotNull();
+        assertThat(q.policyDecision()).isNull();
+    }
+
+    @Test
+    void ac_10_3_aVerifiedAndRevalidatedRecordIsLoadedAutoCorrectedWithItsCorrections() {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put("Country", "  United Kingdom ");
+        List<TriageRequest> sent = new ArrayList<>();
+        AiTriagePort strip = RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP);
+
+        ProcessedRecord result = processor(SchemaTestSupport.realSchema(), request -> {
+                    sent.add(request);
+                    return strip.triage(request);
+                })
+                .process(new RawRecord.Parsed(4, row));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Loaded.class, loaded -> {
+            assertThat(loaded.transaction().loadOrigin()).isEqualTo(LoadOrigin.AUTO_CORRECTED);
+            assertThat(loaded.transaction().sourceRowNumber()).isEqualTo(4);
+            assertThat(loaded.transaction().country()).isEqualTo("United Kingdom");
+            assertThat(loaded.corrections()).singleElement().satisfies(c -> {
+                assertThat(c.fieldName()).isEqualTo("country");
+                assertThat(c.operation()).isEqualTo(Operation.TRIM);
+                assertThat(c.originalValue()).isEqualTo("  United Kingdom ");
+                assertThat(c.correctedValue()).isEqualTo("United Kingdom");
+                assertThat(c.aiRequestId()).isEqualTo(sent.getFirst().requestId());
+            });
+        });
+    }
+
+    static Stream<Arguments> rejectedByTheApplier() {
+        return Stream.of(
+                arguments("Quantity", "6 units", QuarantineReason.POLICY_REJECTED, PolicyDecision.Stage.POLICY, false),
+                arguments(
+                        "Country",
+                        "Atlantis",
+                        QuarantineReason.VERIFICATION_FAILED,
+                        PolicyDecision.Stage.VERIFICATION,
+                        false),
+                arguments(
+                        "Country",
+                        " Atlantis ",
+                        QuarantineReason.REVALIDATION_FAILED,
+                        PolicyDecision.Stage.VERIFICATION,
+                        true));
+    }
+
+    @ParameterizedTest
+    @MethodSource("rejectedByTheApplier")
+    void docs04Section4_aRejectedRecordIsQuarantinedWithItsDecisionAndNeverLoaded(
+            String header, String value, QuarantineReason reason, PolicyDecision.Stage stage, boolean approved) {
+        Map<String, String> row = RecordTestSupport.validRow();
+        row.put(header, value);
+
+        ProcessedRecord result = processor(
+                        SchemaTestSupport.realSchema(),
+                        RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP))
+                .process(new RawRecord.Parsed(5, row));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(reason);
+            assertThat(q.rawPayload()).isEqualTo(row);
+            assertThat(q.policyDecision()).isNotNull();
+            assertThat(q.policyDecision().stage()).isEqualTo(stage);
+            assertThat(q.policyDecision().approved()).isEqualTo(approved);
+            // D167: there was a valid analysis, so the summary is the AI's and the analysis is kept.
+            assertThat(q.summary()).isEqualTo("summary of the AI");
+            assertThat(q.analysis()).isNotNull();
+            assertThat(q.analysis().maxSeverity()).isEqualTo(Severity.LOW);
+            assertThat(q.aiRequestId()).isNotNull();
+        });
+    }
+
+    @Test
+    void docs04Section4_anAutoFixableMalformedRowIsRejectedByThePolicy() {
+        ProcessedRecord result = processor(
+                        SchemaTestSupport.realSchema(),
+                        RecordTestSupport.autoFixable("Outer spaces", RecordTestSupport.STRIP))
+                .process(new RawRecord.Malformed(7, "a,b", "Expected 8 columns, found 2", 8, 2));
+
+        assertThat(result).isInstanceOfSatisfying(ProcessedRecord.Quarantined.class, q -> {
+            assertThat(q.reason()).isEqualTo(QuarantineReason.POLICY_REJECTED);
+            assertThat(q.policyDecision().violations())
+                    .extracting(PolicyDecision.ViolationDecision::rejectionReason)
+                    .containsExactly(RejectionReason.ERROR_CODE_NOT_CORRECTABLE);
+        });
     }
 
     @Test
