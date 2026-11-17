@@ -1791,3 +1791,31 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `IngestionJobTriageTest`: `AutoFixableEcho` gana el interruptor `cacheHit` (se reinicia en `@AfterEach`) y deja
     intacta una respuesta que no sea 200. Ninguna aserción cambia.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 4 — Cierre (2026-11-16)
+- Hecho (`07` §6): las nueve ramas del plan, todas con la CI de `dev` en verde.
+  - #47 `CorrectionPolicy` (FR-09); #48 verificadores de texto y #49 de parseo (FR-10); #50 `CorrectionApplier` con
+    revalidación y `correction_log` (FR-10); #51 carga `AUTO_CORRECTED` (FR-10); #52 AC-20.3 (FR-20); #53 suite
+    adversarial AC-10.6 (FR-10); #54 resiliencia del cliente de IA (FR-12, NFR-07); #55 presupuesto por lote (FR-08,
+    AC-08.6).
+- Demo (`07` l.116), hecha por el owner con `docker compose`: `dirty-1k` terminó `COMPLETED` con auto-correcciones y
+  cuarentenas; con `ai-service` apagado, otro lote terminó `COMPLETED` con los inválidos en `AI_UNAVAILABLE`.
+- Recortado: nada en este sprint.
+- Decisiones nuevas que piden ADR: ninguna. Resilience4j ya está nombrado en `03` NFR-07 y es una biblioteca, no una
+  dependencia de infraestructura (`09` l.166).
+- Horas reales (mismo método que el 2026-11-12: días con actividad en git × 2,5 h): 5 días (12, 13, 14, 15 y 16 de
+  noviembre), ≈ 12,5 h, frente a las ~14 h de `07` l.113. Acumulado S1-S4: ≈ 82,5 h.
+- `docs/08` §3.2: se marcan las seis casillas que hoy cubre un test de CI (líneas 43 a 48), cada una con su test.
+  Quedan sin marcar:
+  - Pendiente: el invariante `read = direct + autoCorrected + quarantined` por muestra (l.42). Falta un test que pase
+    `dirty-10k` y `raw-natural-2k` por el job.
+  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 5.
+- Punto de control de `07` l.190: se cumple al etiquetar `v0.4`, sin recortes. Si no se etiqueta, aplica la acción de
+  esa fila.
+- Decisión del owner (2026-11-16): "Apruebo docs/sprint-4-close: la entrada "Sprint 4 — Cierre" en docs/CHANGELOG.md
+  con las nueve ramas (#47 a #55), la demo hecha por el owner, nada recortado, ninguna decisión que pida ADR, horas
+  reales de 5 días (12, 13, 14, 15 y 16 de noviembre) ≈ 12,5 h y el punto de control de 07 l.190 condicionado al tag
+  v0.4; marcar en docs/08 §3.2 las casillas de las líneas 43 a 48 citando sus tests y dejar sin marcar la 42 y la 49; y
+  el cambio de la sección Status del README.md."
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
+  `docs/08-definition-of-done.md`. `README.md` (sección Status), nombrado en la frase.

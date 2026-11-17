@@ -59,8 +59,7 @@ Contributors — human or AI agent — should read [AGENTS.md](AGENTS.md) and
 
 ## Status
 
-**Work in progress: Sprint 1 of 8** ([plan](docs/07-plan-de-sprints.md)). Both services and
-`docker-compose.yml` are being added during this sprint, so the quickstart above does not work on `main` yet.
+**Sprint 4 of 8 completed (v0.4: end-to-end core with the mock provider)** ([plan](docs/07-plan-de-sprints.md)).
 The full README (architecture diagram, 5-minute demo, evaluation results against ground truth,
 known limitations and roadmap) is a Sprint 8 deliverable.
 
