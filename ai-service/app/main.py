@@ -13,6 +13,7 @@ from app.api import system, triage
 from app.api.errors import REQUEST_ID_HEADER, internal_error, register_problem_handlers
 from app.config import get_settings
 from app.services.cache import TriageCache
+from app.services.system_prompt import load_system_prompt
 
 BATCH_ID_HEADER = "X-Batch-Id"
 
@@ -63,6 +64,8 @@ def create_app() -> FastAPI:
         # AC-18.2: Swagger UI at /docs and the spec at /openapi.json (FastAPI defaults).
     )
     settings = get_settings()
+    # D214: a missing prompt is a broken image, not a provider to report as degraded.
+    load_system_prompt(settings.prompt_version_triage)
     # One per app, not per process-wide global: uvicorn builds one app, and each test its own.
     app.state.triage_cache = TriageCache(
         settings.triage_cache_max_entries, settings.triage_cache_ttl_seconds

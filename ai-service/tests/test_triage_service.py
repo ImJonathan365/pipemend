@@ -32,10 +32,12 @@ from app.domain.llm_output import LlmTriageOutput
 from app.domain.triage_prompt import read_context
 from app.providers.base import ProviderResult, Usage
 from app.providers.mock import MockProvider
+from app.services import system_prompt
 from app.services.cache import TriageCache
 from app.services.triage_service import LlmInvalidOutputError, TriageService
 
 FIXTURES = Path(__file__).resolve().parents[2] / "contracts" / "fixtures"
+PROMPT_V1 = Path(__file__).resolve().parents[1] / "app" / "prompts" / "triage_v1.md"
 REQUEST_FIXTURES = [
     entry["fixture"]
     for entry in json.loads((FIXTURES / "index.json").read_text(encoding="utf-8"))
@@ -194,8 +196,13 @@ def test_a_missing_price_goes_to_a_human_with_high_severity() -> None:
     assert response.max_severity is Severity.HIGH
 
 
-def test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock() -> None:
+def test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC-08.2 and NFR-12. LLM_MODEL and the prompt version only come from the settings."""
+    (tmp_path / "triage_v7.md").write_text("any prompt", encoding="utf-8")
+    monkeypatch.setattr(system_prompt, "PROMPTS", tmp_path)
+    system_prompt.load_system_prompt.cache_clear()
     settings = Settings(llm_model="any-model", prompt_version_triage="triage_v7")
 
     meta = _run(_service(_Counting(), settings), _request(_country())).meta
@@ -227,13 +234,13 @@ def test_llm_calls_is_zero_with_the_mock_on_a_miss_and_on_a_hit() -> None:
 
 
 def test_the_prompt_carries_the_request_as_data_and_the_output_schema() -> None:
-    """docs/04 step 4. The system prompt stays empty until Sprint 5 (docs/07)."""
+    """docs/04 step 4: the system prompt is the file of PROMPT_VERSION_TRIAGE, byte for byte."""
     provider = _Counting()
     request = _request(_country())
 
     _run(_service(provider, Settings(ai_explanation_language="en")), request)
 
-    assert provider.system_prompt == ""
+    assert provider.system_prompt == PROMPT_V1.read_text(encoding="utf-8")
     assert provider.user_prompt is not None
     sent = read_context(provider.user_prompt)
     assert sent.violations == request.violations
