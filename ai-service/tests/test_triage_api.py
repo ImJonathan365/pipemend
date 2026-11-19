@@ -21,7 +21,13 @@ from app.config import LlmProvider, Settings, get_settings
 from app.domain.contracts import ErrorCode, ProblemDetail
 from app.domain.triage_prompt import read_context
 from app.main import create_app
-from app.providers.base import ProviderResult
+from app.providers.base import (
+    ProviderAuthError,
+    ProviderRateLimited,
+    ProviderResult,
+    ProviderTimeout,
+    ProviderUnavailable,
+)
 from app.providers.mock import MockProvider
 
 FIXTURES = Path(__file__).resolve().parents[2] / "contracts" / "fixtures"
@@ -79,6 +85,16 @@ class _Canned:
         self, _system: str, _user: str, _schema: dict[str, Any]
     ) -> ProviderResult:
         return ProviderResult(self.content, None)
+
+
+class _Raises:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def complete_json(
+        self, _system: str, _user: str, _schema: dict[str, Any]
+    ) -> ProviderResult:
+        raise self.error
 
 
 class _FailsInside:
@@ -289,6 +305,27 @@ def test_an_invalid_output_is_a_502_that_quotes_nothing() -> None:
     response = _client(provider=provider).post("/v1/triage", json=_body())
 
     _problem(response, 502, "LLM_INVALID_OUTPUT")
+    assert ROW_VALUE not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (ProviderTimeout(), 504, "LLM_TIMEOUT"),
+        (ProviderRateLimited(None), 429, "RATE_LIMITED"),
+        (ProviderUnavailable(), 502, "LLM_PROVIDER_ERROR"),
+        (ProviderAuthError(), 502, "LLM_PROVIDER_ERROR"),
+    ],
+)
+def test_a_provider_failure_is_its_problem_of_docs_06_a5(
+    error: Exception, status: int, code: str
+) -> None:
+    body = _body()
+    body["record"]["raw"] = body["record"]["raw"] | {"Description": ROW_VALUE}
+
+    response = _client(provider=_Raises(error)).post("/v1/triage", json=body)
+
+    _problem(response, status, code)
     assert ROW_VALUE not in response.text
 
 

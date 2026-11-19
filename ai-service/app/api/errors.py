@@ -11,7 +11,12 @@ from starlette.exceptions import HTTPException
 
 from app.domain.contracts import ProblemDetail, ProblemFieldError
 from app.providers.base import ProviderNotConfiguredError
-from app.services.triage_service import LlmInvalidOutputError
+from app.services.triage_service import (
+    LlmInvalidOutputError,
+    LlmProviderError,
+    LlmRateLimitedError,
+    LlmTimeoutError,
+)
 
 REQUEST_ID_HEADER = "X-Request-Id"
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -122,6 +127,36 @@ def register_problem_handlers(app: FastAPI) -> None:
             "LLM_INVALID_OUTPUT",
             "Invalid LLM output",
             "The LLM answered something outside the contract.",
+        )
+
+    @app.exception_handler(LlmProviderError)
+    async def _provider_error(request: Request, _: LlmProviderError) -> JSONResponse:
+        return _problem(
+            request,
+            502,
+            "LLM_PROVIDER_ERROR",
+            "LLM provider error",
+            "The LLM provider failed or refused the call.",
+        )
+
+    @app.exception_handler(LlmRateLimitedError)
+    async def _rate_limited(request: Request, _: LlmRateLimitedError) -> JSONResponse:
+        return _problem(
+            request,
+            429,
+            "RATE_LIMITED",
+            "Rate limited",
+            "The LLM provider limited the calls and the retry did not fit in the deadline.",
+        )
+
+    @app.exception_handler(LlmTimeoutError)
+    async def _timeout(request: Request, _: LlmTimeoutError) -> JSONResponse:
+        return _problem(
+            request,
+            504,
+            "LLM_TIMEOUT",
+            "LLM timeout",
+            "The LLM did not answer within the request deadline.",
         )
 
     @app.exception_handler(ProviderNotConfiguredError)

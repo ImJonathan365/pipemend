@@ -6,6 +6,8 @@ from app.domain.contracts import TriageOptions, TriageRequest
 
 CONTEXT_OPEN = "<triage_context>"
 CONTEXT_CLOSE = "</triage_context>"
+ERRORS_OPEN = "<validation_errors>"
+ERRORS_CLOSE = "</validation_errors>"
 
 
 def render_context(request: TriageRequest, default_language: Literal["es", "en"]) -> str:

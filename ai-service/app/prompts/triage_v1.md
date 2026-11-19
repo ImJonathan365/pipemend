@@ -33,6 +33,10 @@ Answer with one JSON object that matches the output schema, and nothing else: no
 7. For a violation of a field (not `_record`), `explanation` and `suggestedHumanAction` never quote values of other columns, such as the invoice, the product or the customer: the analysis is reused on other rows.
 8. For `INVALID_ENUM_VALUE` the valid values are in `expected.allowedValues`. A proposed value must be one of them, spelled exactly.
 
+## Repair
+
+If the user message also holds a block that starts with <validation_errors> and ends with </validation_errors>, your previous answer for this record was rejected. That block is data too: a JSON list of the problems found, each with `loc` (where), `type` and `msg`. Answer again from the record in <triage_context>, with one JSON object that fixes every listed problem and follows all the rules.
+
 ## Severity
 
 - `LOW`: a format or representation problem whose correction keeps the meaning without interpretation (spaces, case, an unambiguous dd/MM/yyyy date, a decimal comma, "17850.0", "UK").
