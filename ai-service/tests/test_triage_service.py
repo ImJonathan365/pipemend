@@ -569,7 +569,7 @@ def _reordered(country: Violation, date: Violation) -> dict[str, Any]:
     ],
 )
 def test_an_invalid_output_raises_and_stores_nothing(content: dict[str, Any]) -> None:
-    """docs/06 frontier LLM -> ai-service and rule 4. The repair attempt is Sprint 5 (docs/07)."""
+    """docs/06 frontier LLM -> ai-service and rule 4. Repeated after the repair, still invalid."""
     provider = _Canned(content)
     cache = TriageCache(10, 60)
     service = TriageService(provider, Settings(), cache)
@@ -577,7 +577,7 @@ def test_an_invalid_output_raises_and_stores_nothing(content: dict[str, Any]) ->
     with pytest.raises(LlmInvalidOutputError):
         _run(service, _request(_country(), _date()))
 
-    assert provider.calls == 1
+    assert provider.calls == 2
     assert len(cache) == 0
 
 

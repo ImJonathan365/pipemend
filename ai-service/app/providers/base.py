@@ -20,6 +20,26 @@ class ProviderNotConfiguredError(Exception):
     """A provider that cannot run: no API key (AC-17.3) or not implemented yet (Sprint 5)."""
 
 
+# What each real provider translates its SDK errors into (docs/04 section 9). The triage service
+# owns the retries (docs/03 NFR-07), so a provider never retries on its own.
+class ProviderTimeout(Exception):  # noqa: N818 - the names of docs/04 section 9
+    pass
+
+
+class ProviderUnavailable(Exception):  # noqa: N818
+    """5xx or a network error."""
+
+
+class ProviderRateLimited(Exception):  # noqa: N818
+    def __init__(self, retry_after: float | None = None) -> None:
+        super().__init__("rate limited")
+        self.retry_after = retry_after
+
+
+class ProviderAuthError(Exception):
+    pass
+
+
 class LLMProvider(Protocol):
     # async because the triage endpoint must never block the event loop (NFR-10, docs/09 7.6). The
     # caller bounds the call with asyncio.timeout, so the timeout is not part of this signature.

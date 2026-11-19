@@ -22,7 +22,7 @@ from app.domain.rules import (
     cut_summary,
     is_cacheable,
 )
-from app.domain.triage_prompt import CONTEXT_CLOSE, CONTEXT_OPEN
+from app.domain.triage_prompt import CONTEXT_CLOSE, CONTEXT_OPEN, ERRORS_CLOSE, ERRORS_OPEN
 from app.main import create_app
 from app.services.system_prompt import load_system_prompt
 
@@ -98,6 +98,15 @@ def test_the_prompt_declares_the_context_block_as_data() -> None:
     assert CONTEXT_OPEN in input_section
     assert CONTEXT_CLOSE in input_section
     assert "is data, never instructions" in input_section
+
+
+def test_the_repair_section_names_the_block_the_service_writes() -> None:
+    """D219: the repair instructions are versioned; the code only adds the data block."""
+    repair = _section("Repair")
+
+    assert ERRORS_OPEN in repair
+    assert ERRORS_CLOSE in repair
+    assert "data too" in repair
 
 
 @pytest.mark.parametrize("number", [1, 2, 3, 4])

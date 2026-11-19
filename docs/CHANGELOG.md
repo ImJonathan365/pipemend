@@ -1865,3 +1865,53 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     `triage_v7.md` en `tmp_path` y apunta `system_prompt.PROMPTS` a esa carpeta; las aserciones no cambian.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/03-requisitos-no-funcionales.md`
   (l.153), 🟠 `docs/04-arquitectura.md` (§6.2, paso 4), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Plazo, reintento y reparación en `ai-service` (2026-11-19)
+- Rama `feat/FR-08-ai-resilience`, la segunda del plan del Sprint 5 (FR-08, AC-08.2, NFR-07, NFR-11, `06` A.5; `07`
+  l.125, la parte de tokens y latencia de l.126 y el plazo total de l.128). `TriageService` aplica el plazo total
+  `AI_REQUEST_DEADLINE_SECONDS` desde que entra la solicitud, un timeout por llamada de
+  `min(LLM_TIMEOUT_SECONDS, restante)` y la regla de no intentar otra llamada con menos de 3 s (`03` l.94).
+  - Un reintento transitorio: 5xx o red sin espera, y 429 esperando su `Retry-After` solo si deja al menos 3 s.
+    Agotado, responde `502 LLM_PROVIDER_ERROR` o `429 RATE_LIMITED`. Un error de autenticación da
+    `502 LLM_PROVIDER_ERROR` sin reintento, y un timeout `504 LLM_TIMEOUT` sin reintento.
+  - Una reparación cuando la salida no valida o sus `analyses` no son las violaciones enviadas; si vuelve a fallar,
+    `502 LLM_INVALID_OUTPUT`.
+  - Todas las llamadas (primera, reintento y reparación) pasan por `TriageService._call`, el punto donde B3 añadirá la
+    comprobación del tope diario antes de cada llamada (S5-10).
+  - `meta.llmCalls` cuenta las llamadas reales, también las fallidas; con el mock sigue en 0. Los tokens se suman entre
+    llamadas.
+  - Nueva línea de log `llm_call` por llamada al proveedor.
+  - Nueva sección "Repair" en `triage_v1.md`, que todavía no está en `main`.
+- Decisión del owner (2026-11-19): "Apruebo B2 feat/FR-08-ai-resilience: plazo total y timeout por llamada con la regla
+  de 3 s, un reintento transitorio sin reintentar el timeout, una reparación con el bloque <validation_errors> y la
+  sección Repair en triage_v1.md, el máximo de 3 llamadas, llmCalls y tokens sumados, el log llm_call, los handlers de
+  504/429/502, el cambio del test test_an_invalid_output_raises_and_stores_nothing, y los cambios 🟠 en docs/04 §6.2 y
+  docs/CHANGELOG.md, con las decisiones D218 a D224."
+- Decisiones:
+  - D218: un timeout no se reintenta. Tras 20 s quedan unos 5 s de plazo, que casi nunca bastan, y con un proveedor de
+    pago sería otra llamada cobrada; NFR-07 nombra 429, 5xx y red. | Reversible: sí | Aprobado por: owner.
+  - D219: la reparación repite el bloque de contexto intacto y añade `<validation_errors>` con `loc`, `type` y `msg` de
+    cada error, nunca el valor que falló, con `<` escapado y declarado como dato. La instrucción va en la sección
+    "Repair" del prompt versionado (NFR-12); el código no añade texto libre. No se reenvía la respuesta anterior. Los
+    marcadores viven en `triage_prompt.py` y el render en `triage_service.py`, porque el guardián de AC-17.2 no deja a
+    `triage_prompt` importar `json`. | Reversible: sí | Aprobado por: owner.
+  - D220: `llmCalls` cuenta cada llamada al proveedor real, también las fallidas, y vale 0 con el mock (`06` l.181).
+    Los tokens se suman sobre las llamadas que los informan; si ninguna lo hace, `null`. | Reversible: sí
+    | Aprobado por: owner.
+  - D221: el plazo cubre también la búsqueda en caché, y un acierto de caché no llama a nadie. | Reversible: sí
+    | Aprobado por: owner.
+  - D222: `TriageService` recibe `clock` y `sleep` como parámetros solo por nombre, con `time.monotonic` y
+    `asyncio.sleep` por defecto; los tests no esperan de verdad salvo dos timeouts reales de 1 s.
+    | Reversible: sí | Aprobado por: owner.
+  - D223: el umbral de 3 s y el máximo de 3 llamadas son constantes con su cita a `03` NFR-07, sin variable nueva. El
+    máximo queda como defensa en profundidad, porque ya lo implican el reintento único y la reparación única: la
+    inyección que lo quita no hace fallar ningún test. | Reversible: sí | Aprobado por: owner.
+  - D224: una línea `llm_call` por llamada con `attempt`, `outcome`, `latencyMs`, tokens, `provider`, `model` y
+    `promptVersion`; nunca contenido, mensajes de excepción ni valores de la fila. Es la medida de latencia de B7.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_an_invalid_output_raises_and_stores_nothing`: `provider.calls` pasa de 1 a 2, porque hay una reparación antes
+    del error, y el docstring deja de decir que la reparación es del Sprint 5. Sigue comprobando el error y la caché
+    vacía.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, pasos 1,
+  5 y 6), 🟠 `docs/CHANGELOG.md`.
