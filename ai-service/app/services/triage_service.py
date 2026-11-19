@@ -25,10 +25,8 @@ from app.domain.rules import (
 from app.domain.triage_prompt import render_context
 from app.providers.base import LLMProvider, Usage
 from app.services.cache import TriageCache, cache_key
+from app.services.system_prompt import load_system_prompt
 
-# prompts/triage_v1.md arrives in Sprint 5 with the real providers. Until then create_provider can
-# only build the mock, which ignores this, so no LLM ever receives an empty system prompt.
-_SYSTEM_PROMPT = ""
 _OUTPUT_SCHEMA = LlmTriageOutput.model_json_schema(by_alias=True)
 _CACHED_SUMMARY = {
     "es": "Violaciones analizadas: {total}. Corregibles: {fixable}. Para revisión humana: {human}.",
@@ -61,7 +59,9 @@ class TriageService:
             return self._respond(request, cached, summary, started, None, cache_hit=True)
 
         result = await self._provider.complete_json(
-            _SYSTEM_PROMPT, render_context(request, language), _OUTPUT_SCHEMA
+            load_system_prompt(self._settings.prompt_version_triage),
+            render_context(request, language),
+            _OUTPUT_SCHEMA,
         )
         try:
             output = LlmTriageOutput.model_validate(result.content)

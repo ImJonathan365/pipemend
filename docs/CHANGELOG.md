@@ -1819,3 +1819,49 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   el cambio de la sección Status del README.md."
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
   `docs/08-definition-of-done.md`. `README.md` (sección Status), nombrado en la frase.
+
+## Sprint 5 — Prompt `triage_v1` (2026-11-18)
+- Rama `feat/FR-08-triage-prompt-v1`, la primera del plan del Sprint 5 (FR-08, AC-08.1, AC-08.3, NFR-12, NFR-14, `07`
+  l.122). Nuevo `ai-service/app/prompts/triage_v1.md` en inglés: rol, bloque de contexto declarado como dato (`09`
+  §7.11), formato de salida, esquema de salida literal, reglas duras, escala y pisos de severidad, allowlist de
+  operaciones con sus campos y `parameters`, y 4 ejemplos *few-shot* inventados. Mide 11 609 caracteres.
+  - El servicio envía como prompt de sistema el archivo de `PROMPT_VERSION_TRIAGE` tal cual (`04` §6.2, paso 4), y
+    `create_app` lo carga al arrancar: si falta, el servicio no arranca. El mock lo recibe y lo ignora (AC-17.2).
+  - `triage_v1.md` pasa a 🔴 cuando llegue a `main` (`09` §2.1). Hasta cerrar la prueba manual del Sprint 5 (B7) se
+    puede ajustar en `dev`; no se fusiona `dev` → `main` antes (decisión S5-5 del plan del sprint).
+- Decisión del owner (2026-11-18): "Apruebo B1 feat/FR-08-triage-prompt-v1: triage_v1.md en inglés con el esquema
+  literal sin títulos, la allowlist, los pisos de severidad y 4 few-shot sintéticos; el cargador que impide arrancar si
+  falta el prompt; el cambio del test test_the_prompt_carries_the_request_as_data_and_the_output_schema; y los cambios
+  🟠 en docs/03 l.153, docs/04 l.252 y docs/CHANGELOG.md, con las decisiones D210 a D216."
+- Decisión del owner (2026-11-18): "Apruebo cambiar en B1 la preparación de
+  test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock con un triage_v7.md en tmp_path y
+  monkeypatch de system_prompt.PROMPTS, sin tocar sus aserciones, y el cargador en app/services/system_prompt.py."
+- Decisiones:
+  - D210: el prompt está en inglés; el idioma de `explanation`, `suggestedHumanAction` y `summary` lo fija
+    `options.explanationLanguage` de la solicitud. | Reversible: sí (con `triage_v2`) | Aprobado por: owner.
+  - D211: el catálogo de países no va en el prompt, sino en `expected.allowedValues` de cada solicitud con
+    `INVALID_ENUM_VALUE` (AC-07.3), para no pagar sus tokens en todas las llamadas. `03` l.153 se actualiza.
+    | Reversible: sí | Aprobado por: owner.
+  - D212: el esquema de salida va literal: es el de `LlmTriageOutput` sin las claves `title`. Un test lo compara con el
+    modelo, así que cambiar el modelo obliga a crear `triage_v2` (NFR-12). | Reversible: sí | Aprobado por: owner.
+  - D213: los ejemplos *few-shot* son inventados a partir de los ejemplos de `02` y `06`, nunca sacados de `data/`, para
+    que la evaluación con LLM real no sea circular. Un test comprueba que cada uno valida con `LlmTriageOutput`, que
+    `rules.py` lo deja igual, que `originalValue` es `receivedValue` y que los de nivel campo se pueden cachear
+    (AC-08.4 c). | Reversible: sí | Aprobado por: owner.
+  - D214: si falta el prompt de la versión configurada, el servicio no arranca: es una imagen rota, no un proveedor sin
+    configurar al que corresponda `degraded` (AC-17.3). | Reversible: sí | Aprobado por: owner.
+  - D215: el mock recibe el prompt real y lo ignora, sin ningún cambio. | Reversible: sí | Aprobado por: owner.
+  - D216: no hay test de longitud del prompt, porque el umbral sería inventado; la longitud se mide y se anota.
+    | Reversible: sí | Aprobado por: owner.
+  - D217: el cargador vive en `app/services/system_prompt.py` y no en `app/domain/triage_prompt.py`, como decía el
+    plan. El mock importa `triage_prompt`, y el guardián de AC-17.2
+    (`test_the_mock_cannot_read_files_or_reach_the_network[triage_prompt]`) prohíbe que ese módulo lea archivos. Se
+    movió el cargador en vez de relajar el guardián. Acepta solo versiones con la forma `nombre_vN`, para que
+    `PROMPT_VERSION_TRIAGE` no pueda salir de `app/prompts`. | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_the_prompt_carries_the_request_as_data_and_the_output_schema`: la aserción `system_prompt == ""` pasa a ser
+    igualdad exacta con el contenido de `triage_v1.md`, y el docstring deja de decir "stays empty until Sprint 5".
+  - `test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock`: solo cambia la preparación. Crea
+    `triage_v7.md` en `tmp_path` y apunta `system_prompt.PROMPTS` a esa carpeta; las aserciones no cambian.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/03-requisitos-no-funcionales.md`
+  (l.153), 🟠 `docs/04-arquitectura.md` (§6.2, paso 4), 🟠 `docs/CHANGELOG.md`.

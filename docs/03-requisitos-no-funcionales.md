@@ -150,7 +150,7 @@ Qué cuenta como falla para el circuit breaker: fallas de transporte, *read time
 - Se registran tokens de entrada/salida cuando el proveedor los informa, y `meta.llmCalls` (llamadas reales al LLM dentro de la solicitud, incluidos reintento y reparación).
 - **Fórmula de costo para el README y el reporte de evaluación** (los precios cambian; no se escriben en el código):
   `costo_lote ≈ llamadas_sin_caché × llmCalls_promedio × (tokens_entrada_prom × precio_entrada + tokens_salida_prom × precio_salida)`.
-  El prompt de triage incluye el catálogo de países (≤ 100 valores) y ejemplos *few-shot*, así que los tokens de entrada por llamada pueden ser del orden de miles: medirlo en el Sprint 5 y anotarlo.
+  El prompt de sistema (`triage_v1.md`) lleva reglas, esquema de salida y ejemplos *few-shot*; el catálogo de países (≤ 100 valores) **no** va en él, sino en `expected.allowedValues` de cada solicitud con `INVALID_ENUM_VALUE` (AC-07.3). Aun así, los tokens de entrada por llamada pueden ser del orden de miles: medirlo en el Sprint 5 y anotarlo. <!-- owner, 2026-11-18 -->
 
 ### NFR-12 — Trazabilidad de la IA (Must)
 
