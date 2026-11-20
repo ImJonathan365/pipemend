@@ -10,6 +10,7 @@ from app.api.errors import (
     problem_schema,
 )
 from app.api.system import SettingsDep
+from app.config import Settings
 from app.domain.contracts import TriageRequest, TriageResponse
 from app.providers.base import LLMProvider, ProviderNotConfiguredError
 from app.providers.factory import create_provider
@@ -36,10 +37,14 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def get_provider(settings: SettingsDep) -> LLMProvider:
+def get_provider(settings: SettingsDep, request: Request) -> LLMProvider:
     if not settings.provider_configured:
         raise ProviderNotConfiguredError(f"LLM_PROVIDER={settings.llm_provider.value} has no key")
-    return create_provider(settings)
+    # D246: one per app and settings, so its connection pool lives as long as the app.
+    providers: dict[Settings, LLMProvider] = request.app.state.providers
+    if settings not in providers:
+        providers[settings] = create_provider(settings)
+    return providers[settings]
 
 
 @router.post("/v1/triage", summary="Analyse one invalid record", responses=_ERROR_RESPONSES)

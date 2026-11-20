@@ -27,6 +27,8 @@ from app.domain.contracts import (
 from app.domain.triage_prompt import ERRORS_CLOSE, ERRORS_OPEN
 from app.providers.base import (
     ProviderAuthError,
+    ProviderBadRequest,
+    ProviderInvalidOutput,
     ProviderRateLimited,
     ProviderResult,
     ProviderTimeout,
@@ -247,6 +249,24 @@ def test_analyses_that_are_not_the_violations_are_repaired_too() -> None:
 
     assert response.meta.llm_calls == 2
     assert '"violations_mismatch"' in script.prompts[1]
+
+
+def test_an_answer_that_is_not_json_is_repaired_and_its_tokens_count() -> None:
+    """D245."""
+    not_json = ProviderInvalidOutput([{"loc": [], "type": "json_invalid", "msg": "m"}], Usage(7, 2))
+
+    script, _, response = _triage((1, not_json), (1, ProviderResult(VALID, Usage(10, 4))))
+
+    assert response.meta.llm_calls == 2
+    assert (response.meta.input_tokens, response.meta.output_tokens) == (17, 6)
+    assert '"json_invalid"' in script.prompts[1]
+
+
+def test_a_bad_request_is_a_provider_error_without_retry() -> None:
+    """D244."""
+    script = _failing(LlmProviderError, (1, ProviderBadRequest()), (1, VALID))
+
+    assert script.calls == 1
 
 
 def test_an_answer_still_invalid_after_the_repair_is_invalid_output() -> None:

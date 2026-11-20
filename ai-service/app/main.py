@@ -2,7 +2,8 @@ import logging
 import time
 import traceback
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request, Response
@@ -12,6 +13,7 @@ from app import __version__
 from app.api import system, triage
 from app.api.errors import REQUEST_ID_HEADER, internal_error, register_problem_handlers
 from app.config import get_settings
+from app.providers.base import ClosableProvider
 from app.services.cache import TriageCache
 from app.services.daily_cap import DailyCallCounter
 from app.services.system_prompt import load_system_prompt
@@ -52,10 +54,20 @@ def configure_logging() -> None:
     )
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    # D246: the providers live as long as the app, and so do their connections.
+    for provider in app.state.providers.values():
+        if isinstance(provider, ClosableProvider):
+            await provider.aclose()
+
+
 def create_app() -> FastAPI:
     configure_logging()
 
     app = FastAPI(
+        lifespan=_lifespan,
         title="PipeMend ai-service",
         version=__version__,
         description=(
@@ -73,6 +85,7 @@ def create_app() -> FastAPI:
     )
     # AC-08.8: also for /v1/schema-drift/analyze when it exists (Sprint 7), with this same counter.
     app.state.daily_calls = DailyCallCounter()
+    app.state.providers = {}
 
     @app.middleware("http")
     async def bind_request_context(

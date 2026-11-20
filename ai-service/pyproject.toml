@@ -15,6 +15,8 @@ dependencies = [
     # NFR-08 names structlog or python-json-logger; structlog is chosen because contextvars make
     # batchId/requestId correlation cheap once the triage endpoint lands.
     "structlog==26.1.0",
+    # FR-17 openai_compatible (D239): a release at least two weeks old. Brings httpx2 to runtime.
+    "openai==3.45.0",
 ]
 
 # Added with `uv add --dev`. Never needed at runtime: the image is built with --no-dev.

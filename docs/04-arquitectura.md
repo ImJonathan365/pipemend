@@ -334,7 +334,7 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
    # Ollama local (sin costo)
    LLM_PROVIDER=openai_compatible
    LLM_MODEL=<modelo-local, p. ej. llama3.1:8b>
-   LLM_API_KEY=ollama        # valor dummy si el cliente lo exige
+   LLM_API_KEY=ollama        # cualquier valor no vacío: sin clave el servicio queda degraded (AC-17.3)
    LLM_BASE_URL=http://host.docker.internal:11434/v1
 
    # Anthropic
@@ -349,11 +349,13 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 
 > Los nombres de modelo no se fijan en el código ni en estos documentos: se configuran por `LLM_MODEL`. Usar un modelo que soporte salida JSON de forma fiable.
 
+> **Ollama:** `openai_compatible` pide `response_format: json_object` y `max_tokens`. La ventana de contexto la fija el servidor Ollama (no PipeMend) y, si es menor que el prompt, Ollama puede truncarlo sin avisar; se ajusta en el servidor (p. ej., `OLLAMA_CONTEXT_LENGTH`). Supuesto pendiente de verificar en la prueba manual del Sprint 5. <!-- owner, 2026-11-19 -->
+
 ### Cómo agregar un proveedor nuevo
 
 1. Crear `providers/<nombre>.py` implementando el `Protocol` `LLMProvider` (`async complete_json(system_prompt, user_prompt, json_schema) -> ProviderResult(content: dict, usage: Usage | None)`; `async` por NFR-10). <!-- owner, 2026-11-01 -->
 2. Registrarlo en `providers/factory.py` bajo un nuevo valor de `LLM_PROVIDER`.
-3. Traducir errores del SDK a las excepciones propias (`ProviderTimeout`, `ProviderUnavailable`, `ProviderRateLimited`, `ProviderAuthError`).
+3. Traducir errores del SDK a las excepciones propias (`ProviderTimeout`, `ProviderUnavailable`, `ProviderRateLimited`, `ProviderAuthError`, `ProviderBadRequest` para cualquier otro 4xx, y `ProviderInvalidOutput` si la respuesta no es un objeto JSON o se cortó por el límite de tokens), con los reintentos del SDK desactivados: los reintentos son de `triage_service` (NFR-07). <!-- owner, 2026-11-19 -->
 4. Tests con respuestas simuladas del SDK (sin red).
 5. Actualizar esta sección y `.env.example`. No requiere ADR (es un adaptador nuevo detrás de una interfaz existente); **sí** lo requiere cambiar la interfaz o el contrato.
 

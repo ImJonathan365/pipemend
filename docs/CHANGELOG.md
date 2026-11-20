@@ -1992,3 +1992,55 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `TriageRequestBuilderTest`: el builder recibe `RecordTestSupport.noRedaction(...)`.
   - `RecordTestSupport.processor`: igual.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Proveedor `openai_compatible` (2026-11-19)
+- Rama `feat/FR-17-openai-compatible`, la quinta del plan del Sprint 5 (FR-17, AC-17.1, AC-17.3, AC-17.4; `07`
+  l.123). Nuevo `OpenAICompatibleProvider`, que sirve para OpenAI, Ollama, Groq, LM Studio y otros a través de
+  `LLM_BASE_URL`. `create_provider` lo elige solo por `LLM_PROVIDER`.
+  - Dependencia nueva de runtime: `openai==3.45.0`. Resuelve contra `uv.lock` y funciona con Python 3.14.7 (medido).
+    Hace que `httpx2` 2.13.1, que ya estaba en dev, pase a ser transitiva de runtime.
+  - `anthropic` sigue respondiendo `PROVIDER_NOT_CONFIGURED` hasta la rama siguiente.
+  - Una batería de contrato compartida (`tests/test_provider_contract.py`) prueba el adaptador con un doble HTTP
+    (`httpx2.MockTransport`), sin red. La guardia de `tests/conftest.py` corta cualquier conexión o resolución de
+    nombres fuera de loopback.
+  - `ProviderBadRequest` y `ProviderInvalidOutput` son excepciones nuevas del proveedor. `04` §9 (l.356) listaba
+    cuatro; esta rama añade las dos y la nota de que los reintentos del SDK van desactivados.
+- Decisión del owner (2026-11-19): "Apruebo B5 feat/FR-17-openai-compatible: openai==3.45.0 en pyproject.toml y
+  uv.lock, OpenAICompatibleProvider con json_object, max_tokens, LLM_TEMPERATURE y max_retries=0, las excepciones
+  ProviderBadRequest y ProviderInvalidOutput con su manejo en TriageService, un proveedor por app, la guardia de red en
+  conftest.py, la batería de contrato, los cambios en test_a_real_provider_is_refused_by_name y
+  test_a_real_provider_is_a_503_with_or_without_key, y los cambios 🟠 en docs/04 §9, .env.example y docs/CHANGELOG.md,
+  con las decisiones D239 a D248."
+- Decisiones:
+  - D239: `openai==3.45.0` (publicada el 2026-11-04) y no la última, 3.56.0, que se publicó el mismo día del plan. Una
+    versión de horas es un riesgo de cadena de suministro innecesario. | Reversible: sí | Aprobado por: owner.
+  - D240: `response_format={"type": "json_object"}`, con el esquema en el prompt de sistema (S5-7).
+    | Reversible: sí | Aprobado por: owner.
+  - D241: `max_tokens`, que aceptan Ollama, Groq y la mayoría de servidores compatibles; no se ha verificado si algún
+    modelo nuevo de OpenAI exige `max_completion_tokens`. | Reversible: sí | Aprobado por: owner.
+  - D242: la temperatura sale de `LLM_TEMPERATURE` (default 0) y se fija en el constructor (S5-9).
+    | Reversible: sí | Aprobado por: owner.
+  - D243: `max_retries=0`, porque los reintentos son del servicio (NFR-07). El timeout del SDK es
+    `LLM_TIMEOUT_SECONDS`, como red de seguridad por debajo de `asyncio.timeout`. | Reversible: sí
+    | Aprobado por: owner.
+  - D244: cualquier otro 4xx (modelo inexistente, contexto demasiado largo) es `ProviderBadRequest`, que da
+    `502 LLM_PROVIDER_ERROR` sin reintento, porque un reintento recibiría lo mismo. | Reversible: sí
+    | Aprobado por: owner.
+  - D245: una respuesta vacía, que no es JSON, que no es un objeto o que se cortó por el límite de tokens es
+    `ProviderInvalidOutput`. Va a la reparación como cualquier salida inválida, y sus tokens cuentan.
+    | Reversible: sí | Aprobado por: owner.
+  - D246: un proveedor por app y configuración, guardado en `app.state.providers`. Su cliente se cierra en el
+    `lifespan` de `create_app` al apagar la app. | Reversible: sí | Aprobado por: owner.
+  - D247: un fixture autouse en `tests/conftest.py` hace fallar `socket.connect`, `connect_ex` y `getaddrinfo`
+    hacia cualquier destino que no sea loopback (S5-6). | Reversible: sí | Aprobado por: owner.
+  - D248: de `Retry-After` solo se interpretan segundos; una fecha HTTP da `None`. | Reversible: sí
+    | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_provider_factory.py::test_a_real_provider_is_refused_by_name`: queda solo para `anthropic`, y el docstring
+    del módulo se actualiza.
+  - `test_triage_api.py::test_a_real_provider_is_a_503_with_or_without_key`: sin clave, los dos proveedores siguen
+    dando 503; con clave, solo `anthropic`. Con `openai_compatible` y clave el test intentaba una conexión de red real:
+    antes de añadir la guardia, ese caso dio 502.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§9), 🟠
+  `.env.example` (un comentario), 🟠 `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock`
+  (dependencia nueva, sin cambio de versión mayor).
