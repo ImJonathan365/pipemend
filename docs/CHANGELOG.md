@@ -1915,3 +1915,41 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     vacía.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, pasos 1,
   5 y 6), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Tope diario de llamadas al LLM (2026-11-19)
+- Rama `feat/FR-08-daily-cap`, la tercera del plan del Sprint 5 (FR-08, AC-08.8, NFR-11, NFR-17; `07` l.128, la
+  parte del tope diario). `TriageService._call` reserva una llamada en `DailyCallCounter` antes de cada llamada real
+  al LLM: la primera, el reintento y la reparación (S5-10). Si `LLM_MAX_CALLS_PER_DAY` ya se alcanzó, responde
+  `429 LLM_BUDGET_EXHAUSTED` sin llamar al proveedor, también a mitad de una solicitud.
+  - Un acierto de caché sigue respondiendo, porque la caché se consulta antes de `_call`. El mock no reserva.
+  - El contador vive en `app.state.daily_calls` (uno por app, como la caché) y se reinicia a medianoche UTC o al
+    reiniciar el proceso. `/v1/info` devuelve su valor en `limits.llmCallsToday`.
+  - `LLM_MAX_CALLS_PER_DAY` menor que 1 impide arrancar.
+  - Pendiente del Sprint 7: AC-08.8 también cubre `/v1/schema-drift/analyze`. Cuando exista, debe usar este mismo
+    contador de `app.state`, no uno propio.
+- Decisión del owner (2026-11-19): "Apruebo B3 feat/FR-08-daily-cap: DailyCallCounter en app.state con reinicio a
+  medianoche UTC, la reserva en TriageService._call antes de cada llamada real con 429 LLM_BUDGET_EXHAUSTED también a
+  mitad de solicitud, el mock exento, llmCallsToday real en /v1/info, LLM_MAX_CALLS_PER_DAY >= 1, los cambios de
+  docstring en los dos test_the_daily_cap_does_not_apply_to_the_mock, y los cambios 🟠 en docs/04 §6.2 paso 3 y
+  docs/CHANGELOG.md, con las decisiones D225 a D231."
+- Decisiones:
+  - D225: `DailyCallCounter` en `services/daily_cap.py`, guardado en `app.state`. Reservar comprueba y suma sin ningún
+    `await` en medio, así que dos solicitudes no pueden tomar la última llamada; el `Dockerfile` arranca un único
+    worker. El tope se pasa en cada reserva desde los `Settings` de la solicitud, en vez de fijarse al crear el
+    contador. | Reversible: sí | Aprobado por: owner.
+  - D226: cuenta toda llamada real intentada, también las que fallan; la llamada rechazada por el tope no cuenta.
+    | Reversible: sí | Aprobado por: owner.
+  - D227: el día es la fecha UTC del reloj inyectado, comparada al reservar o al leer; sin tareas en segundo plano.
+    | Reversible: sí | Aprobado por: owner.
+  - D228: el mock está exento: no reserva, y `llmCallsToday` queda en 0. | Reversible: sí | Aprobado por: owner.
+  - D229: `TriageService` recibe `daily_calls` solo por nombre; si no se pasa, crea uno nuevo, nunca un "sin tope".
+    La API pasa el de `app.state`, y un test lo comprueba. | Reversible: sí | Aprobado por: owner.
+  - D230: `LLM_MAX_CALLS_PER_DAY` debe ser >= 1, igual que D206 con `AI_MAX_CALLS_PER_BATCH`. | Reversible: sí
+    | Aprobado por: owner.
+  - D231: un rechazo escribe una línea `llm_budget_exhausted` con `attempt`, y no `llm_call`, porque no hubo llamada.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_triage_service.py::test_the_daily_cap_does_not_apply_to_the_mock`: el docstring deja de decir que el tope es
+    del Sprint 5. El de `test_triage_api.py` no tenía texto obsoleto y no se tocó. Ninguna aserción cambia.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, paso 3),
+  🟠 `docs/CHANGELOG.md`.

@@ -38,6 +38,7 @@ from app.providers.base import (
     Usage,
 )
 from app.services.cache import TriageCache, cache_key
+from app.services.daily_cap import DailyCallCounter
 from app.services.system_prompt import load_system_prompt
 
 _OUTPUT_SCHEMA = LlmTriageOutput.model_json_schema(by_alias=True)
@@ -65,6 +66,10 @@ class LlmInvalidOutputError(Exception):
         super().__init__(message)
         # For the repair prompt only: loc, type and msg, never the input that failed.
         self.errors = errors
+
+
+class LlmBudgetExhaustedError(Exception):
+    """429 LLM_BUDGET_EXHAUSTED: LLM_MAX_CALLS_PER_DAY reached (AC-08.8)."""
 
 
 class LlmTimeoutError(Exception):
@@ -111,10 +116,13 @@ class TriageService:
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        daily_calls: DailyCallCounter | None = None,
     ) -> None:
         self._provider = provider
         self._settings = settings
         self._cache = cache
+        # D229: the API passes the one of app.state; never a default without a cap.
+        self._daily_calls = daily_calls or DailyCallCounter()
         self._clock = clock
         self._sleep = sleep
 
@@ -167,6 +175,13 @@ class TriageService:
     async def _call(self, run: _Run, prompt: str, attempt: str) -> ProviderResult:
         """The one place every LLM call goes through, the first, the retry and the repair."""
         remaining = run.deadline - self._clock()
+        # AC-08.8 before every call, retry and repair included (S5-10); the mock is exempt.
+        if (
+            self._settings.llm_provider is not LlmProvider.MOCK
+            and not self._daily_calls.try_reserve(self._settings.llm_max_calls_per_day)
+        ):
+            _log.info("llm_budget_exhausted", attempt=attempt)
+            raise LlmBudgetExhaustedError("LLM_MAX_CALLS_PER_DAY reached")
         run.calls += 1
         run.call_started = time.perf_counter()
         try:

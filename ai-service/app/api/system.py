@@ -74,11 +74,9 @@ def info(settings: SettingsDep, request: Request) -> InfoResponse:
             entries=len(request.app.state.triage_cache),
             max_entries=settings.triage_cache_max_entries,
         ),
-        # A real counter from Sprint 5 (daily cap, AC-08.8). Nothing counts yet, so zero is the
-        # truthful answer, not a placeholder for a feature pretending to exist.
         limits=LimitsInfo(
             request_deadline_seconds=settings.ai_request_deadline_seconds,
             max_llm_calls_per_day=settings.llm_max_calls_per_day,
-            llm_calls_today=0,
+            llm_calls_today=request.app.state.daily_calls.today(),
         ),
     )

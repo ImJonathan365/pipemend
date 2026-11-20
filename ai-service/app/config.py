@@ -2,6 +2,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +25,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_timeout_seconds: int = 20
-    llm_max_calls_per_day: int = 2000
+    # D230: at least 1; 0 would be an LLM-less mode that no doc defines.
+    llm_max_calls_per_day: int = Field(default=2000, ge=1)
     llm_max_output_tokens: int = 1024
     llm_temperature: float = 0.0
 

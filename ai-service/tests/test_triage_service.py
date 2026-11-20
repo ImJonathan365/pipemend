@@ -592,7 +592,7 @@ def test_the_error_of_an_invalid_output_does_not_quote_the_row() -> None:
 
 
 def test_the_daily_cap_does_not_apply_to_the_mock() -> None:
-    """AC-08.8: "Con LLM_PROVIDER=mock el tope no aplica". The cap itself is Sprint 5 (docs/07)."""
+    """AC-08.8: "Con LLM_PROVIDER=mock el tope no aplica". The cap is in test_daily_cap.py."""
     provider = _Counting()
     service = _service(provider, Settings(llm_max_calls_per_day=1))
 
