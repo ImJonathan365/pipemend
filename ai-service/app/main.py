@@ -13,6 +13,7 @@ from app.api import system, triage
 from app.api.errors import REQUEST_ID_HEADER, internal_error, register_problem_handlers
 from app.config import get_settings
 from app.services.cache import TriageCache
+from app.services.daily_cap import DailyCallCounter
 from app.services.system_prompt import load_system_prompt
 
 BATCH_ID_HEADER = "X-Batch-Id"
@@ -70,6 +71,8 @@ def create_app() -> FastAPI:
     app.state.triage_cache = TriageCache(
         settings.triage_cache_max_entries, settings.triage_cache_ttl_seconds
     )
+    # AC-08.8: also for /v1/schema-drift/analyze when it exists (Sprint 7), with this same counter.
+    app.state.daily_calls = DailyCallCounter()
 
     @app.middleware("http")
     async def bind_request_context(

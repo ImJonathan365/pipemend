@@ -17,7 +17,7 @@ from app.services.triage_service import TriageService
 
 router = APIRouter(tags=["triage"])
 
-# All of docs/06 A.5, also what only Sprint 5 emits (429, 504).
+# All of docs/06 A.5.
 _ERRORS = {
     400: "INVALID_REQUEST",
     422: "VALIDATION_ERROR",
@@ -53,5 +53,10 @@ async def triage(
     """AC-08.1. It only proposes: the policy in pipeline-service decides (ADR-0003)."""
     if header_id is not None and header_id != body.request_id:
         raise RequestIdMismatchError
-    service = TriageService(provider, settings, request.app.state.triage_cache)
+    service = TriageService(
+        provider,
+        settings,
+        request.app.state.triage_cache,
+        daily_calls=request.app.state.daily_calls,
+    )
     return await service.triage(body)

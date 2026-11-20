@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException
 from app.domain.contracts import ProblemDetail, ProblemFieldError
 from app.providers.base import ProviderNotConfiguredError
 from app.services.triage_service import (
+    LlmBudgetExhaustedError,
     LlmInvalidOutputError,
     LlmProviderError,
     LlmRateLimitedError,
@@ -137,6 +138,16 @@ def register_problem_handlers(app: FastAPI) -> None:
             "LLM_PROVIDER_ERROR",
             "LLM provider error",
             "The LLM provider failed or refused the call.",
+        )
+
+    @app.exception_handler(LlmBudgetExhaustedError)
+    async def _budget_exhausted(request: Request, _: LlmBudgetExhaustedError) -> JSONResponse:
+        return _problem(
+            request,
+            429,
+            "LLM_BUDGET_EXHAUSTED",
+            "LLM budget exhausted",
+            "LLM_MAX_CALLS_PER_DAY has been reached; only cached analyses are answered.",
         )
 
     @app.exception_handler(LlmRateLimitedError)
