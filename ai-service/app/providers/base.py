@@ -1,7 +1,7 @@
 """The seam between the triage service and any LLM (ADR-0004, docs/04 section 9)."""
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,26 @@ class ProviderRateLimited(Exception):  # noqa: N818
 
 class ProviderAuthError(Exception):
     pass
+
+
+class ProviderBadRequest(Exception):  # noqa: N818
+    """Any other 4xx, such as an unknown model: a retry would get the same answer (D244)."""
+
+
+class ProviderInvalidOutput(Exception):  # noqa: N818
+    """The answer is not one JSON object (D245). It goes to the repair like any invalid output."""
+
+    def __init__(self, errors: list[dict[str, Any]], usage: Usage | None) -> None:
+        super().__init__("the answer is not one JSON object")
+        self.errors = errors
+        self.usage = usage
+
+
+@runtime_checkable
+class ClosableProvider(Protocol):
+    """A provider holding connections, closed when the app stops (D246)."""
+
+    async def aclose(self) -> None: ...
 
 
 class LLMProvider(Protocol):

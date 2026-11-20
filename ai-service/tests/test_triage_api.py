@@ -329,10 +329,19 @@ def test_a_provider_failure_is_its_problem_of_docs_06_a5(
     assert ROW_VALUE not in response.text
 
 
-@pytest.mark.parametrize("provider", [LlmProvider.OPENAI_COMPATIBLE, LlmProvider.ANTHROPIC])
-@pytest.mark.parametrize("key", ["", "super-secret-key"])
+@pytest.mark.parametrize(
+    ("provider", "key"),
+    [
+        (LlmProvider.OPENAI_COMPATIBLE, ""),
+        (LlmProvider.ANTHROPIC, ""),
+        (LlmProvider.ANTHROPIC, "super-secret-key"),
+    ],
+)
 def test_a_real_provider_is_a_503_with_or_without_key(provider: LlmProvider, key: str) -> None:
-    """AC-17.3 without a key; with one, because it does not exist until Sprint 5 (docs/07)."""
+    """AC-17.3 without a key; anthropic also with one, as it does not exist yet (docs/07).
+
+    openai_compatible with a key is a working provider, and here it would reach the network.
+    """
     client = _client(Settings(llm_provider=provider, llm_api_key=key))
 
     response = client.post("/v1/triage", json=_body())

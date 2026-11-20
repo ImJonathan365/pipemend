@@ -31,6 +31,8 @@ from app.domain.triage_prompt import ERRORS_CLOSE, ERRORS_OPEN, render_context
 from app.providers.base import (
     LLMProvider,
     ProviderAuthError,
+    ProviderBadRequest,
+    ProviderInvalidOutput,
     ProviderRateLimited,
     ProviderResult,
     ProviderTimeout,
@@ -159,18 +161,24 @@ class TriageService:
                 await self._before_retry(run, error)
                 attempt = "retry"
                 continue
-            try:
-                output = _parse(result.content, request)
-            except LlmInvalidOutputError as error:
-                self._log_call(run, attempt, "invalid_output", result.usage)
-                if run.repaired or not self._may_call_again(run):
-                    raise
-                run.repaired = True
-                prompt = f"{context}\n{_render_errors(error.errors)}"
-                attempt = "repair"
-                continue
-            self._log_call(run, attempt, "ok", result.usage)
-            return output
+            except ProviderInvalidOutput as error:
+                # D245: not one JSON object is invalid output too, repaired the same way.
+                failure = LlmInvalidOutputError("the answer is not one JSON object", error.errors)
+                usage = error.usage
+            else:
+                try:
+                    output = _parse(result.content, request)
+                except LlmInvalidOutputError as error:
+                    failure, usage = error, result.usage
+                else:
+                    self._log_call(run, attempt, "ok", result.usage)
+                    return output
+            self._log_call(run, attempt, "invalid_output", usage)
+            if run.repaired or not self._may_call_again(run):
+                raise failure
+            run.repaired = True
+            prompt = f"{context}\n{_render_errors(failure.errors)}"
+            attempt = "repair"
 
     async def _call(self, run: _Run, prompt: str, attempt: str) -> ProviderResult:
         """The one place every LLM call goes through, the first, the retry and the repair."""
@@ -195,6 +203,13 @@ class TriageService:
         except ProviderAuthError as error:
             self._log_call(run, attempt, "auth_error", None)
             raise LlmProviderError("the provider refused the credentials") from error
+        except ProviderBadRequest as error:
+            # D244: an unknown model or a prompt too long gets the same answer on a retry.
+            self._log_call(run, attempt, "bad_request", None)
+            raise LlmProviderError("the provider refused the request") from error
+        except ProviderInvalidOutput as error:
+            run.add(error.usage)
+            raise
         except ProviderRateLimited:
             self._log_call(run, attempt, "rate_limited", None)
             raise

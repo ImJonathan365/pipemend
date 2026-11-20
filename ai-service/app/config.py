@@ -43,10 +43,8 @@ class Settings(BaseSettings):
     def provider_configured(self) -> bool:
         """AC-17.3: a real provider with no API key leaves the service degraded.
 
-        The mock needs no credentials (NFR-02). docs/04 section 8 notes the key is unnecessary
-        for local endpoints without auth; that exception is deliberately not implemented yet
-        because `openai_compatible` itself only arrives in Sprint 5. Until then the strict rule
-        is the safe one.
+        The mock needs no credentials (NFR-02). A local endpoint without auth, such as Ollama,
+        takes any non-empty value (S5-11, docs/04 section 9), so the strict rule stays.
         """
         if self.llm_provider is LlmProvider.MOCK:
             return True
