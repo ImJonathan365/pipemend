@@ -1953,3 +1953,42 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
     del Sprint 5. El de `test_triage_api.py` no tenía texto obsoleto y no se tocó. Ninguna aserción cambia.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, paso 3),
   🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Redacción de lo que viaja a la IA (2026-11-19)
+- Rama `feat/FR-07-redaction`, la cuarta del plan del Sprint 5 (FR-07, AC-07.1, AC-07.4, NFR-15; `07` l.126, la parte
+  de redacción). `TriageRequestBuilder` aplica `RecordRedaction` al `record.raw` que viaja a `ai-service`.
+  - Con `AI_SEND_FULL_RECORD=true` (default), cada campo de `AI_REDACT_FIELDS` (default `customer_id`) viaja como
+    `"[REDACTED]"`, salvo que la solicitud traiga una violación de ese campo.
+  - Con `false`, solo viajan las columnas de las violaciones a nivel campo, y una fila `MALFORMED_ROW` envía `{}`.
+  - Con `true`, `_rawLine` viaja sin redactar: es la limitación de AC-07.4, que el README del Sprint 8 debe recoger.
+  - `quarantine_record.raw_payload` guarda la fila tal como se leyó.
+  - Claves nuevas en `application.yml`: `pipemend.ai.privacy.redact-fields` y `send-full-record`. `04` §8,
+    `.env.example` y `docker-compose.yml` ya tenían las variables.
+  - Pendiente del Sprint 7: NFR-15 (`03` l.187) también cubre `sampleRows` de `/v1/schema-drift/analyze`. FR-05 debe
+    reutilizar `RecordRedaction`, no escribir otra redacción.
+- Decisión del owner (2026-11-19): "Apruebo B4 feat/FR-07-redaction: AiPrivacyProperties y RecordRedaction con nombres
+  canónicos validados contra el schema al arrancar, la redacción solo de lo que viaja salvo los campos con violación,
+  AI_SEND_FULL_RECORD=false con solo las columnas de violaciones a nivel campo y {} para MALFORMED_ROW, las claves
+  nuevas en application.yml, el cambio de preparación en TriageRequestBuilderTest y RecordTestSupport, el test del job
+  con WireMock, y la entrada en docs/CHANGELOG.md, con las decisiones D232 a D238."
+- Decisiones:
+  - D232: `AI_REDACT_FIELDS` usa nombres canónicos separados por comas, traducidos a la cabecera de origen con el
+    schema. Un nombre desconocido impide arrancar, porque no redactaría nada (S5-13). | Reversible: sí
+    | Aprobado por: owner.
+  - D233: solo se redacta lo que viaja; `raw_payload` de la cuarentena no cambia, porque una persona lo necesita para
+    corregir la fila (S5-12). | Reversible: sí | Aprobado por: owner.
+  - D234: no se redacta ningún campo que tenga una violación en la misma solicitud, ya que todas viajan juntas.
+    | Reversible: sí | Aprobado por: owner.
+  - D235: una lista vacía no redacta nada; es una exclusión explícita. | Reversible: sí | Aprobado por: owner.
+  - D236: con `AI_SEND_FULL_RECORD=false`, una violación `_record` no añade columnas, porque los docs no definen las
+    columnas de una regla; `MALFORMED_ROW` envía `{}` (AC-07.4, `06` A.1). | Reversible: sí | Aprobado por: owner.
+  - D237: un valor vacío también se redacta, para no revelar ni que estaba vacío. | Reversible: sí
+    | Aprobado por: owner.
+  - D238: los tests del processor y del builder usan "sin redacción" (`RecordTestSupport.noRedaction`) y conservan sus
+    aserciones; el cableado real lo prueba un test del job con WireMock. | Reversible: sí | Aprobado por: owner.
+- Riesgo anotado, sin cambio: el `technicalMessage` de `BUSINESS_RULE_VIOLATION` incluye los valores de factura y
+  cantidad (`Validator.java:179`) y viaja aunque `AI_SEND_FULL_RECORD=false`. No incluye `customer_id`.
+- Tests existentes que cambian (solo la preparación):
+  - `TriageRequestBuilderTest`: el builder recibe `RecordTestSupport.noRedaction(...)`.
+  - `RecordTestSupport.processor`: igual.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.

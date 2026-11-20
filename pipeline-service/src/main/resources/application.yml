@@ -39,6 +39,10 @@ pipemend:
     request-deadline: ${AI_REQUEST_DEADLINE_SECONDS:25}s
     # AC-08.6: the logical calls without a cache hit that one batch may make; at least 1.
     max-calls-per-batch: ${AI_MAX_CALLS_PER_BATCH:500}
+    # NFR-15: canonical field names whose value travels as [REDACTED], unless the field is under analysis.
+    privacy:
+      redact-fields: ${AI_REDACT_FIELDS:customer_id}
+      send-full-record: ${AI_SEND_FULL_RECORD:true}
   # FR-09. The defaults are those of docs/04 section 8 and docs/02 section 4, and change only with an ADR (AC-09.4).
   policy:
     min-confidence: ${AI_MIN_CONFIDENCE:0.85}

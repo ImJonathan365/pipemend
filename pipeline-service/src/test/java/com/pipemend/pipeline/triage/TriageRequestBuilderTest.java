@@ -20,8 +20,12 @@ class TriageRequestBuilderTest {
     private static final UUID BATCH = UUID.fromString("8a2e6d1c-43b2-4f55-8f6b-1f2b3c4d5e6f");
     private static final String EMOJI = "\uD83D\uDE00";
 
-    private final TriageRequestBuilder builder =
-            new TriageRequestBuilder(BATCH, SchemaTestSupport.realSchema(), "dirty-1k.csv", "CSV");
+    private final TriageRequestBuilder builder = new TriageRequestBuilder(
+            BATCH,
+            SchemaTestSupport.realSchema(),
+            "dirty-1k.csv",
+            "CSV",
+            RecordTestSupport.noRedaction(SchemaTestSupport.realSchema()));
 
     private static Violation violation(String field, String value) {
         return new Violation(

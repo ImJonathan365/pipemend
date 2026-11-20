@@ -14,9 +14,11 @@ import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiBudget;
 import com.pipemend.pipeline.triage.AiBudgetProperties;
 import com.pipemend.pipeline.triage.AiClientProperties;
+import com.pipemend.pipeline.triage.AiPrivacyProperties;
 import com.pipemend.pipeline.triage.AiResilience;
 import com.pipemend.pipeline.triage.AiTriagePort;
 import com.pipemend.pipeline.triage.HttpAiTriageClient;
+import com.pipemend.pipeline.triage.RecordRedaction;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.validation.Validator;
 import com.pipemend.pipeline.verifiers.CountryAliases;
@@ -192,6 +194,7 @@ public class IngestionJobConfiguration {
             AiTriagePort triage,
             AiCallLogRepository callLog,
             AiBudgetProperties budget,
+            RecordRedaction redaction,
             CorrectionApplier applier,
             @Value("#{jobParameters['batchId']}") String batchId) {
         UUID id = UUID.fromString(batchId);
@@ -201,11 +204,17 @@ public class IngestionJobConfiguration {
                 schema,
                 validator,
                 new SalesTransactionTransformer(schema),
-                new TriageRequestBuilder(id, schema, source.filename(), source.type()),
+                new TriageRequestBuilder(id, schema, source.filename(), source.type(), redaction),
                 triage,
                 // One per step execution: nothing of a batch carries over to the next one (AC-08.6).
                 new AiBudget(() -> callLog.budgetExhausted(id, budget.maxCallsPerBatch())),
                 applier);
+    }
+
+    /** Checked against the schema at startup (D232). */
+    @Bean
+    RecordRedaction recordRedaction(SchemaDefinition schema, AiPrivacyProperties privacy) {
+        return new RecordRedaction(schema, privacy);
     }
 
     /** Stateless, so one for every batch (D174). The validator is the same one that found the violations (AC-10.2). */

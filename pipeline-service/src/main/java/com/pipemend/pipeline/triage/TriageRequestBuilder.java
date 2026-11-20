@@ -11,8 +11,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * The context of an invalid record as it travels to the AI (FR-07). AC-07.1 is partial: AI_REDACT_FIELDS and
- * AI_SEND_FULL_RECORD arrive in Sprint 5 (docs/07), before any real provider can receive this.
+ * The context of an invalid record as it travels to the AI (FR-07), with the record cut by AI_REDACT_FIELDS and
+ * AI_SEND_FULL_RECORD (NFR-15).
  */
 public final class TriageRequestBuilder {
 
@@ -23,19 +23,25 @@ public final class TriageRequestBuilder {
     private final UUID batchId;
     private final TriageRequest.SchemaRef schema;
     private final TriageRequest.Source source;
+    private final RecordRedaction redaction;
 
-    public TriageRequestBuilder(UUID batchId, SchemaDefinition schema, String filename, String sourceType) {
+    public TriageRequestBuilder(
+            UUID batchId, SchemaDefinition schema, String filename, String sourceType, RecordRedaction redaction) {
         this.batchId = batchId;
         this.schema = new TriageRequest.SchemaRef(schema.name(), String.valueOf(schema.version()));
         this.source = new TriageRequest.Source(filename, sourceType);
+        this.redaction = redaction;
     }
 
     public TriageRequest build(UUID requestId, RawRecord record, List<Violation> violations) {
         Map<String, String> raw = switch (record) {
-            case RawRecord.Parsed parsed -> parsed.valuesByHeader();
-            // AC-07.4: only what travels is cut; quarantine_record keeps the whole line.
+            case RawRecord.Parsed parsed -> redaction.apply(parsed.valuesByHeader(), violations);
+            // AC-07.4: only what travels is cut; quarantine_record keeps the whole line. A line not split into
+            // columns cannot be redacted field by field, so without the full record it does not travel at all.
             case RawRecord.Malformed malformed ->
-                Map.of(RAW_LINE, Text.truncate(malformed.rawLine(), RAW_LINE_MAX_LENGTH));
+                redaction.sendFullRecord()
+                        ? Map.of(RAW_LINE, Text.truncate(malformed.rawLine(), RAW_LINE_MAX_LENGTH))
+                        : Map.of();
         };
         return new TriageRequest(
                 requestId,
