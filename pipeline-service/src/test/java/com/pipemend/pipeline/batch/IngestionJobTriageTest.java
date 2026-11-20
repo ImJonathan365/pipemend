@@ -66,6 +66,8 @@ class IngestionJobTriageTest {
     private static final String UNKNOWN_COUNTRY =
             "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850,Atlantis\n";
 
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
     private static final WireMockServer SERVER =
             new WireMockServer(options().bindAddress("127.0.0.1").dynamicPort().extensions(new AutoFixableEcho()));
 
@@ -153,6 +155,29 @@ class IngestionJobTriageTest {
         assertThat(count("ai_call_log", batchId, "outcome = 'SUCCESS'")).isEqualTo(50);
         assertThat(count("ai_call_log", batchId, "true")).isEqualTo(50);
         assertThat(aiCallsCount(batchId)).isEqualTo(50);
+    }
+
+    @Test
+    void nfr_15_theAiReceivesTheCustomerRedactedAndTheQuarantineKeepsIt() throws Exception {
+        UUID batchId = receive((HEADER + UNKNOWN_COUNTRY).getBytes(StandardCharsets.UTF_8));
+
+        assertThat(launch(batchId).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        JsonNode raw = SERVER.getAllServeEvents().stream()
+                .map(event -> JSON.readTree(event.getRequest().getBodyAsString()))
+                .filter(body -> body.path("batchId").asString().equals(batchId.toString()))
+                .findFirst()
+                .orElseThrow()
+                .path("record")
+                .path("raw");
+        assertThat(raw.path("Customer ID").asString()).isEqualTo("[REDACTED]");
+        assertThat(raw.path("Country").asString()).isEqualTo("Atlantis");
+        assertThat(raw.path("Invoice").asString()).isEqualTo("536365");
+        assertThat(jdbc.sql("SELECT raw_payload ->> 'Customer ID' FROM quarantine_record WHERE batch_id = :id")
+                        .param("id", batchId)
+                        .query(String.class)
+                        .single())
+                .isEqualTo("17850");
     }
 
     @ParameterizedTest
