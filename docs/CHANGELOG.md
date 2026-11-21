@@ -2044,3 +2044,70 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§9), 🟠
   `.env.example` (un comentario), 🟠 `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock`
   (dependencia nueva, sin cambio de versión mayor).
+
+## Sprint 5 — Proveedor `anthropic` (2026-11-20)
+- Rama `feat/FR-17-anthropic`, la sexta del plan del Sprint 5 (FR-17, AC-17.1, AC-17.3; `07` l.124). Nuevo
+  `AnthropicProvider` sobre la API Messages. `create_provider` lo elige solo por `LLM_PROVIDER`, y ya no queda ningún
+  valor de `LLM_PROVIDER` sin adaptador.
+  - Dependencia nueva de runtime: `anthropic==2.5.0`. Resuelve contra `uv.lock` y funciona con Python 3.14.7 (medido).
+    Trae como transitivas `opentelemetry-api` 1.45.2 y `docstring-parser` 0.18.0. `opentelemetry-api` entra solo
+    como dependencia del SDK: PipeMend no la configura ni la usa.
+  - El SDK envía `anthropic-version: 2026-10-21`, y esa versión de la API rechaza la temperatura en todos los
+    modelos. `03` NFR-11 y NFR-13 y `04` l.253 y §8 recogen la excepción (decisión A del owner).
+  - La batería de contrato de B5 corre ahora con dos wires, OpenAI y Anthropic, más los tests propios de Anthropic.
+- Decisión del owner (2026-11-20), tras comprobar el SDK: "Decido la opción A para B6: anthropic==2.5.0, el
+  adaptador de Anthropic no envía temperature porque la API 2026-10-21 la rechaza, LLM_TEMPERATURE solo aplica a
+  openai_compatible, y se actualizan docs/03 NFR-11 y NFR-13 y docs/04 l.253 y §8/§9 con esa excepción."
+- Aprobación del owner (2026-11-20): "Apruebo B6 feat/FR-17-anthropic: anthropic==2.5.0 en pyproject.toml y
+  uv.lock, AnthropicProvider sin temperature, thinking ni effort, con output_config.format json_schema, max_tokens
+  como salida truncada y refusal como ProviderBadRequest, el arranque bloqueado con anthropic y LLM_TEMPERATURE
+  distinto de 0, stop_reason en ProviderResult y en el log llm_call, la función de Retry-After compartida en
+  base.py, _AnthropicWire en la batería de contrato, los cambios en test_a_real_provider_is_refused_by_name,
+  test_a_real_provider_is_a_503_with_or_without_key y test_the_call_carries_the_settings_and_both_prompts, y los
+  cambios 🟠 en docs/03 NFR-11 y NFR-13, docs/04 l.253 y §8/§9, .env.example y docs/CHANGELOG.md, con las
+  decisiones D249 a D255."
+- Decisiones:
+  - D249: `anthropic==2.5.0` (publicada el 2026-11-04), una versión de al menos dos semanas, como en D239.
+    | Reversible: sí | Aprobado por: owner.
+  - D250: el adaptador no envía temperatura. Con `LLM_PROVIDER=anthropic` y `LLM_TEMPERATURE` distinto de 0, el
+    servicio no arranca (validación de `Settings`, que `create_app` lee al arrancar). | Reversible: sí
+    | Aprobado por: owner.
+  - D251: el JSON se pide con `output_config.format` de tipo `json_schema`, con el esquema de `LlmTriageOutput` que
+    ya recibe `complete_json`. Sin *tool use* ni *prefill* (S5-8, X-11). | Reversible: sí | Aprobado por: owner.
+  - D252: `stop_reason` `max_tokens` es `ProviderInvalidOutput` (`truncated`) y va a la reparación; `refusal` es
+    `ProviderBadRequest`, sin reparación; una respuesta sin bloque de texto es `json_invalid`. El JSON se lee del
+    primer bloque `text`, aunque vaya detrás de un bloque `thinking`. | Reversible: sí | Aprobado por: owner.
+  - D253: no se envía `thinking` ni `effort`, porque enviarlos según el modelo exigiría nombres de modelo en el
+    código. `stop_reason` viaja en `ProviderResult` y `ProviderInvalidOutput` y la línea `llm_call` lo registra como
+    `stopReason`: en OpenAI es su `finish_reason`, y con el mock, `null`. Además, `ProviderBadRequest` lleva el
+    código HTTP y el `stop_reason` cuando existen (un 4xx, su `status`; un `refusal`, `stop_reason="refusal"` sin
+    `status`), en los dos adaptadores, y la línea `llm_call` con `outcome=bad_request` registra `httpStatus` y
+    `stopReason`, nunca el mensaje ni el cuerpo: en B7 hay que distinguir un esquema rechazado (400) de un modelo
+    inexistente (404) y de un `refusal`. | Reversible: sí | Aprobado por: owner.
+  - D254: `LLM_BASE_URL` se ignora con `anthropic`, que usa el endpoint por defecto del SDK, como ya decía `04` §8.
+    | Reversible: sí | Aprobado por: owner.
+  - D255: `retry_after` pasa a `providers/base.py` y la comparten los dos adaptadores. Con ella se mueven los dos
+    errores de salida (`NOT_AN_OBJECT`, `TRUNCATED`), para que la reparación reciba el mismo texto con cualquier
+    proveedor. | Reversible: sí | Aprobado por: owner.
+- Aprobación del owner (2026-11-20), antes del commit: "Apruebo añadir en B6 que ProviderBadRequest lleve el código
+  HTTP y el stop_reason cuando existan, y que la línea llm_call registre httpStatus y stopReason también en
+  bad_request, con sus tests."
+- Riesgos conocidos para B7:
+  - Un `refusal` da `502 LLM_PROVIDER_ERROR`, que cuenta como fallo para el circuit breaker del pipeline (`03`
+    l.102). Muchos rechazos seguidos podrían abrirlo.
+  - Si la API rechaza nuestro esquema (`JsonValue` como `{}`), se para y se consulta al owner; no se prepara nada
+    ahora.
+  - Los modelos que piensan por defecto gastan parte de `LLM_MAX_OUTPUT_TOKENS`; `stopReason` lo mostrará.
+- Tests existentes que cambian:
+  - `test_provider_factory.py::test_a_real_provider_is_refused_by_name` pasa a ser
+    `test_each_provider_builds_its_adapter`, con los tres valores de `LLM_PROVIDER`; el docstring del módulo se
+    actualiza.
+  - `test_triage_api.py::test_a_real_provider_is_a_503_with_or_without_key`: desaparece el caso de `anthropic` con
+    clave, que ahora intentaría salir a la red. Los dos casos sin clave siguen dando 503. El docstring de
+    `test_a_real_provider_without_key_is_refused_before_the_factory` deja de mencionar el Sprint 5.
+  - `test_provider_contract.py::test_the_call_carries_the_settings_and_both_prompts`: la temperatura esperada es la de
+    cada wire, `0` en OpenAI y ausente en Anthropic.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/03-requisitos-no-funcionales.md`
+  (NFR-11, NFR-13), 🟠 `docs/04-arquitectura.md` (l.253, §8 y §9), 🟠 `.env.example` (un comentario), 🟠
+  `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock` (dependencia nueva, sin cambio de versión
+  mayor).

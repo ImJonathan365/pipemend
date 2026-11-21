@@ -164,16 +164,16 @@ class TriageService:
             except ProviderInvalidOutput as error:
                 # D245: not one JSON object is invalid output too, repaired the same way.
                 failure = LlmInvalidOutputError("the answer is not one JSON object", error.errors)
-                usage = error.usage
+                usage, stop_reason = error.usage, error.stop_reason
             else:
                 try:
                     output = _parse(result.content, request)
                 except LlmInvalidOutputError as error:
-                    failure, usage = error, result.usage
+                    failure, usage, stop_reason = error, result.usage, result.stop_reason
                 else:
-                    self._log_call(run, attempt, "ok", result.usage)
+                    self._log_call(run, attempt, "ok", result.usage, result.stop_reason)
                     return output
-            self._log_call(run, attempt, "invalid_output", usage)
+            self._log_call(run, attempt, "invalid_output", usage, stop_reason)
             if run.repaired or not self._may_call_again(run):
                 raise failure
             run.repaired = True
@@ -205,7 +205,7 @@ class TriageService:
             raise LlmProviderError("the provider refused the credentials") from error
         except ProviderBadRequest as error:
             # D244: an unknown model or a prompt too long gets the same answer on a retry.
-            self._log_call(run, attempt, "bad_request", None)
+            self._log_call(run, attempt, "bad_request", None, error.stop_reason, error.status)
             raise LlmProviderError("the provider refused the request") from error
         except ProviderInvalidOutput as error:
             run.add(error.usage)
@@ -237,7 +237,15 @@ class TriageService:
         remaining = run.deadline - self._clock()
         return run.calls < _MAX_LLM_CALLS and remaining >= _MIN_REMAINING_SECONDS
 
-    def _log_call(self, run: _Run, attempt: str, outcome: str, usage: Usage | None) -> None:
+    def _log_call(
+        self,
+        run: _Run,
+        attempt: str,
+        outcome: str,
+        usage: Usage | None,
+        stop_reason: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
         """D224: what B7 measures. Never content, exception messages or values of the row."""
         _log.info(
             "llm_call",
@@ -249,6 +257,10 @@ class TriageService:
             latencyMs=round((time.perf_counter() - run.call_started) * 1000),
             inputTokens=usage.input_tokens if usage else None,
             outputTokens=usage.output_tokens if usage else None,
+            # D253: shows in B7 whether thinking uses up LLM_MAX_OUTPUT_TOKENS.
+            stopReason=stop_reason,
+            # D253: a rejected schema (400), an unknown model (404) and a refusal, apart in B7.
+            httpStatus=http_status,
         )
 
     def _from_cache(self, request: TriageRequest, language: str) -> list[Analysis] | None:

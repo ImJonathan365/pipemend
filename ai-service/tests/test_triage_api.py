@@ -334,14 +334,10 @@ def test_a_provider_failure_is_its_problem_of_docs_06_a5(
     [
         (LlmProvider.OPENAI_COMPATIBLE, ""),
         (LlmProvider.ANTHROPIC, ""),
-        (LlmProvider.ANTHROPIC, "super-secret-key"),
     ],
 )
 def test_a_real_provider_is_a_503_with_or_without_key(provider: LlmProvider, key: str) -> None:
-    """AC-17.3 without a key; anthropic also with one, as it does not exist yet (docs/07).
-
-    openai_compatible with a key is a working provider, and here it would reach the network.
-    """
+    """AC-17.3. With a key both are working providers, and here they would reach the network."""
     client = _client(Settings(llm_provider=provider, llm_api_key=key))
 
     response = client.post("/v1/triage", json=_body())
@@ -353,7 +349,7 @@ def test_a_real_provider_is_a_503_with_or_without_key(provider: LlmProvider, key
 def test_a_real_provider_without_key_is_refused_before_the_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-17.3 must not depend on the factory refusing what does not exist until Sprint 5."""
+    """AC-17.3 is checked before the factory builds anything."""
     monkeypatch.setattr(triage, "create_provider", lambda _settings: MockProvider())
     settings = Settings(llm_provider=LlmProvider.ANTHROPIC, llm_api_key="")
 

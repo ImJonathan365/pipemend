@@ -1,8 +1,8 @@
 from enum import StrEnum
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,13 @@ class Settings(BaseSettings):
 
     triage_cache_max_entries: int = 5000
     triage_cache_ttl_seconds: int = 86400
+
+    @model_validator(mode="after")
+    def _anthropic_takes_no_temperature(self) -> Self:
+        """D250: anthropic never sends it (docs/03 NFR-13), so another value would be a lie."""
+        if self.llm_provider is LlmProvider.ANTHROPIC and self.llm_temperature != 0:
+            raise ValueError("LLM_TEMPERATURE must be 0 with LLM_PROVIDER=anthropic")
+        return self
 
     @property
     def provider_configured(self) -> bool:

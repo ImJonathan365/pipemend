@@ -1,6 +1,6 @@
 """The battery every real provider passes, each with an HTTP double in its own wire format (FR-17).
 
-No network: the SDK gets an httpx2 client whose transport is a function. B6 adds the Anthropic wire.
+No network: the SDK gets an httpx2 client whose transport is a function.
 """
 
 import asyncio
@@ -11,12 +11,14 @@ from typing import Any
 
 import httpx2
 import pytest
+import structlog
 from fastapi.testclient import TestClient
 
 from app.config import LlmProvider, Settings, get_settings
 from app.domain.contracts import TriageRequest
 from app.domain.triage_prompt import CONTEXT_CLOSE, CONTEXT_OPEN, render_context
 from app.main import create_app
+from app.providers.anthropic import AnthropicProvider
 from app.providers.base import (
     ProviderAuthError,
     ProviderBadRequest,
@@ -28,6 +30,9 @@ from app.providers.base import (
 )
 from app.providers.mock import MockProvider
 from app.providers.openai_compatible import OpenAICompatibleProvider
+from app.services import triage_service
+from app.services.cache import TriageCache
+from app.services.triage_service import LlmProviderError, TriageService
 
 SENTINEL = "sentinel-from-the-provider-body"
 SYSTEM = "the system prompt"
@@ -50,6 +55,9 @@ class _Server:
 
 class _OpenAIWire:
     name = LlmProvider.OPENAI_COMPATIBLE
+    # NFR-13: what each wire sends to make the answer reproducible.
+    sampling: dict[str, Any] = {"temperature": 0}  # noqa: RUF012 - read only
+    truncated = "length"
     settings = Settings(
         llm_provider=LlmProvider.OPENAI_COMPATIBLE,
         llm_api_key="test-key",
@@ -105,7 +113,62 @@ class _OpenAIWire:
         }
 
 
-WIRES = [_OpenAIWire()]
+class _AnthropicWire:
+    name = LlmProvider.ANTHROPIC
+    # D250: the API rejects temperature, so nothing is sent.
+    sampling: dict[str, Any] = {}  # noqa: RUF012 - read only
+    truncated = "max_tokens"
+    settings = Settings(
+        llm_provider=LlmProvider.ANTHROPIC, llm_api_key="test-key", llm_model="test-model"
+    )
+    _STOP = {"stop": "end_turn", "length": "max_tokens"}  # noqa: RUF012 - read only
+
+    def provider(self, server: _Server, settings: Settings | None = None) -> AnthropicProvider:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
+        return AnthropicProvider(settings or self.settings, http_client=client)
+
+    def answer(
+        self,
+        text: str | None,
+        usage: tuple[int, int] | None = (12, 3),
+        finish: str = "stop",
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> httpx2.Response:
+        content = [{"type": "text", "text": text}] if text is not None else []
+        body: dict[str, Any] = {
+            "id": "m1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test-model",
+            "content": (blocks or []) + content,
+            "stop_reason": self._STOP.get(finish, finish),
+            "stop_sequence": None,
+        }
+        if usage is not None:
+            body["usage"] = {"input_tokens": usage[0], "output_tokens": usage[1]}
+        return httpx2.Response(200, json=body)
+
+    def failure(self, status: int, headers: dict[str, str] | None = None) -> httpx2.Response:
+        return httpx2.Response(
+            status,
+            headers=headers,
+            json={"type": "error", "error": {"type": "error", "message": SENTINEL}},
+        )
+
+    def sent(self, request: httpx2.Request) -> dict[str, Any]:
+        body = json.loads(request.content)
+        (user,) = body["messages"]
+        assert user["role"] == "user"
+        sent = {
+            "model": body["model"],
+            "max_tokens": body["max_tokens"],
+            "system": body["system"],
+            "user": user["content"],
+        }
+        return sent | ({"temperature": body["temperature"]} if "temperature" in body else {})
+
+
+WIRES = [_OpenAIWire(), _AnthropicWire()]
 
 
 def _complete(wire: Any, respond: Responder) -> tuple[_Server, ProviderResult]:
@@ -140,17 +203,21 @@ def test_an_answer_without_usage_has_no_tokens(wire: Any) -> None:
 
 
 def test_the_call_carries_the_settings_and_both_prompts(wire: Any) -> None:
-    """S5-9 and NFR-13: temperature 0 by default; the model only comes from LLM_MODEL."""
+    """S5-9 and NFR-13: temperature 0 by default, none with anthropic (D250); the model only
+    comes from LLM_MODEL."""
     server, _ = _complete(wire, lambda _: wire.answer("{}"))
 
     (request,) = server.requests
-    assert wire.sent(request) == {
-        "model": "test-model",
-        "temperature": 0,
-        "max_tokens": 1024,
-        "system": SYSTEM,
-        "user": USER,
-    }
+    assert (
+        wire.sent(request)
+        == {
+            "model": "test-model",
+            "max_tokens": 1024,
+            "system": SYSTEM,
+            "user": USER,
+        }
+        | wire.sampling
+    )
 
 
 @pytest.mark.parametrize(
@@ -282,3 +349,108 @@ def test_openai_compatible_asks_for_a_json_object() -> None:
     server, _ = _complete(_OpenAIWire(), lambda _: _OpenAIWire().answer("{}"))
 
     assert json.loads(server.requests[0].content)["response_format"] == {"type": "json_object"}
+
+
+def _anthropic(respond: Responder, schema: dict[str, Any]) -> tuple[_Server, ProviderResult]:
+    server = _Server(respond)
+    provider = _AnthropicWire().provider(server)
+    return server, asyncio.run(provider.complete_json(SYSTEM, USER, schema))
+
+
+def test_anthropic_asks_for_the_schema_it_receives_and_nothing_else() -> None:
+    """D251 and D253: structured output, no tools or prefill, no sampling, thinking or effort."""
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
+
+    server, _ = _anthropic(lambda _: _AnthropicWire().answer("{}"), schema)
+
+    body = json.loads(server.requests[0].content)
+    assert body["output_config"] == {"format": {"type": "json_schema", "schema": schema}}
+    assert set(body) == {"model", "max_tokens", "system", "messages", "output_config"}
+
+
+def test_anthropic_reads_the_json_from_the_text_block_after_a_thinking_block() -> None:
+    """A model that thinks by default answers with its thinking first (D253)."""
+    thinking = [{"type": "thinking", "thinking": "", "signature": "sig"}]
+
+    _, result = _anthropic(lambda _: _AnthropicWire().answer('{"a": 1}', blocks=thinking), {})
+
+    assert result.content == {"a": 1}
+    assert result.stop_reason == "end_turn"
+
+
+def test_anthropic_a_refusal_is_a_bad_request() -> None:
+    """D252: asking again gets the same refusal."""
+    _failing(
+        _AnthropicWire(),
+        lambda _: _AnthropicWire().answer("", finish="refusal"),
+        ProviderBadRequest,
+    )
+
+
+def test_anthropic_a_refusal_is_a_502_after_one_call_without_repair() -> None:
+    body, _ = _valid_answer()
+    wire = _AnthropicWire()
+    server = _Server(lambda _: wire.answer("", finish="refusal"))
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: wire.settings
+    app.state.providers[wire.settings] = wire.provider(server)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/triage", json=body)
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "LLM_PROVIDER_ERROR"
+    assert len(server.requests) == 1
+
+
+def test_a_truncated_answer_carries_its_stop_reason(wire: Any) -> None:
+    """D253: the llm_call log shows it."""
+    _, raised = _failing(wire, lambda _: wire.answer("{}", finish="length"), ProviderInvalidOutput)
+
+    assert isinstance(raised, ProviderInvalidOutput)
+    assert raised.stop_reason == wire.truncated
+
+
+def test_anthropic_ignores_llm_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D254: LLM_BASE_URL is for openai_compatible only (docs/04 section 8)."""
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    settings = Settings(
+        llm_provider=LlmProvider.ANTHROPIC, llm_api_key="k", llm_base_url="http://127.0.0.1:9/v1"
+    )
+
+    provider = AnthropicProvider(settings)
+
+    assert provider._client.base_url.host == "api.anthropic.com"
+
+
+def _logged_bad_request(
+    wire: Any, respond: Responder, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Any]:
+    capture = structlog.testing.LogCapture()
+    monkeypatch.setattr(triage_service, "_log", structlog.wrap_logger(None, processors=[capture]))
+    body, _ = _valid_answer()
+    service = TriageService(wire.provider(_Server(respond)), wire.settings, TriageCache(10, 60))
+    with pytest.raises(LlmProviderError):
+        asyncio.run(service.triage(TriageRequest.model_validate(body)))
+    (call,) = [log for log in capture.entries if log["event"] == "llm_call"]
+    assert call["outcome"] == "bad_request"
+    assert SENTINEL not in str(capture.entries)
+    return call
+
+
+@pytest.mark.parametrize("status", [400, 404])
+def test_a_bad_request_logs_its_http_status(
+    wire: Any, status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D253: a rejected schema (400) and an unknown model (404) apart in B7."""
+    call = _logged_bad_request(wire, lambda _: wire.failure(status), monkeypatch)
+
+    assert (call["httpStatus"], call["stopReason"]) == (status, None)
+
+
+def test_anthropic_a_refusal_logs_its_stop_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    wire = _AnthropicWire()
+
+    call = _logged_bad_request(wire, lambda _: wire.answer("", finish="refusal"), monkeypatch)
+
+    assert (call["httpStatus"], call["stopReason"]) == (None, "refusal")

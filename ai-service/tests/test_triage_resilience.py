@@ -325,3 +325,20 @@ def test_every_call_logs_its_attempt_and_outcome_and_nothing_of_the_answer(
     assert (calls[-1]["inputTokens"], calls[-1]["outputTokens"]) == (9, 3)
     assert all(c["latencyMs"] >= 0 and c["provider"] == "openai_compatible" for c in calls)
     assert SENTINEL not in str(logs)
+
+
+def test_every_call_logs_why_the_llm_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D253: whether thinking uses up LLM_MAX_OUTPUT_TOKENS shows in B7."""
+    capture = structlog.testing.LogCapture()
+    monkeypatch.setattr(triage_service, "_log", structlog.wrap_logger(None, processors=[capture]))
+    truncated = ProviderInvalidOutput(
+        [{"loc": [], "type": "truncated", "msg": "m"}], None, "max_tokens"
+    )
+
+    _triage((1, truncated), (1, ProviderResult(VALID, None, "end_turn")))
+
+    calls = [log for log in capture.entries if log["event"] == "llm_call"]
+    assert [(c["outcome"], c["stopReason"]) for c in calls] == [
+        ("invalid_output", "max_tokens"),
+        ("ok", "end_turn"),
+    ]
