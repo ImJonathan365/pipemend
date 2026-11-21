@@ -10,6 +10,8 @@ from openai.types import CompletionUsage
 
 from app.config import Settings
 from app.providers.base import (
+    NOT_AN_OBJECT,
+    TRUNCATED,
     ProviderAuthError,
     ProviderBadRequest,
     ProviderInvalidOutput,
@@ -18,18 +20,8 @@ from app.providers.base import (
     ProviderTimeout,
     ProviderUnavailable,
     Usage,
+    retry_after,
 )
-
-_NOT_AN_OBJECT = {
-    "loc": [],
-    "type": "json_invalid",
-    "msg": "the answer must be one JSON object and nothing else",
-}
-_TRUNCATED = {
-    "loc": [],
-    "type": "truncated",
-    "msg": "the answer was cut at the output token limit; answer with a shorter JSON object",
-}
 
 
 class OpenAICompatibleProvider:
@@ -70,26 +62,27 @@ class OpenAICompatibleProvider:
         except openai.APIConnectionError as error:
             raise ProviderUnavailable("the provider could not be reached") from error
         except openai.RateLimitError as error:
-            raise ProviderRateLimited(_retry_after(error.response)) from error
+            raise ProviderRateLimited(retry_after(error.response)) from error
         except (openai.AuthenticationError, openai.PermissionDeniedError) as error:
             raise ProviderAuthError("the provider refused the credentials") from error
         except openai.APIStatusError as error:
             if error.status_code >= 500:
                 raise ProviderUnavailable("the provider failed") from error
-            raise ProviderBadRequest(f"the provider answered {error.status_code}") from error
+            raise ProviderBadRequest(error.status_code) from error
 
         usage = _usage(completion.usage)
         choice = completion.choices[0] if completion.choices else None
-        if choice is not None and choice.finish_reason == "length":
-            raise ProviderInvalidOutput([_TRUNCATED], usage)
+        stop_reason = choice.finish_reason if choice is not None else None
+        if stop_reason == "length":
+            raise ProviderInvalidOutput([TRUNCATED], usage, stop_reason)
         content = choice.message.content if choice is not None else None
         try:
             parsed = json.loads(content) if content else None
         except json.JSONDecodeError:
             parsed = None
         if not isinstance(parsed, dict):
-            raise ProviderInvalidOutput([_NOT_AN_OBJECT], usage)
-        return ProviderResult(parsed, usage)
+            raise ProviderInvalidOutput([NOT_AN_OBJECT], usage, stop_reason)
+        return ProviderResult(parsed, usage, stop_reason)
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -99,12 +92,3 @@ def _usage(usage: CompletionUsage | None) -> Usage | None:
     if usage is None:
         return None
     return Usage(usage.prompt_tokens, usage.completion_tokens)
-
-
-def _retry_after(response: httpx2.Response) -> float | None:
-    """D248: delta-seconds only; an HTTP date gives None."""
-    try:
-        seconds = float(response.headers.get("retry-after", ""))
-    except ValueError:
-        return None
-    return seconds if seconds >= 0 else None

@@ -146,7 +146,7 @@ Qué cuenta como falla para el circuit breaker: fallas de transporte, *read time
 - Tope por lote `AI_MAX_CALLS_PER_BATCH` (default 500) aplicado en Spring, con la definición exacta de AC-08.6.
 - Tope global `LLM_MAX_CALLS_PER_DAY` (default 2 000) aplicado en `ai-service` (AC-08.8): protege contra muchos lotes seguidos, que el tope por lote no cubre. Es estado efímero en memoria, permitido igual que la caché (NFR-17).
 - **La garantía dura de costo no está en el código:** antes de usar un proveedor de pago, el owner configura un límite de gasto mensual en la consola del proveedor. El README lo indica en la sección "Cómo cambiar de proveedor LLM".
-- `temperature = 0` y `max_tokens` acotado (`LLM_MAX_OUTPUT_TOKENS`, default 1024).
+- `temperature = 0` con `openai_compatible` (con `anthropic` no se envía, ver NFR-13) y `max_tokens` acotado (`LLM_MAX_OUTPUT_TOKENS`, default 1024). <!-- owner, 2026-11-20 -->
 - Se registran tokens de entrada/salida cuando el proveedor los informa, y `meta.llmCalls` (llamadas reales al LLM dentro de la solicitud, incluidos reintento y reparación).
 - **Fórmula de costo para el README y el reporte de evaluación** (los precios cambian; no se escriben en el código):
   `costo_lote ≈ llamadas_sin_caché × llmCalls_promedio × (tokens_entrada_prom × precio_entrada + tokens_salida_prom × precio_salida)`.
@@ -163,7 +163,7 @@ Qué cuenta como falla para el circuit breaker: fallas de transporte, *read time
   - **"Base limpia"** significa el stack entero desde cero (`docker compose down -v`), no solo PostgreSQL: así tampoco sobrevive la caché en memoria de `ai-service`.
   - Las filas se comparan **sin** ids generados, timestamps ni latencias. El resultado de la caché (`cacheHit`, `outcome = CACHE_HIT`) **no** se excluye: con el stack desde cero también debe coincidir.
   - Comprobación manual: dos ejecuciones del mismo archivo separadas por `docker compose down -v`. AC-20.3 (`02`) la complementa en CI sobre `dirty-1k`.
-- Con LLM real se usa `temperature = 0`; la variabilidad residual se documenta en el reporte de evaluación.
+- Con LLM real, `openai_compatible` usa `temperature = 0`. Con `anthropic`, la API (versión `2026-10-21`, la que envía el SDK) rechaza la temperatura en todos los modelos: la reproducibilidad descansa en el esquema estricto (`output_config.format`) y en la política determinista. La variabilidad residual se documenta en el reporte de evaluación. <!-- owner, 2026-11-20 -->
 
 ### NFR-14 — Seguridad (Must, alcance de portafolio)
 

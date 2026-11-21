@@ -17,6 +17,8 @@ dependencies = [
     "structlog==26.1.0",
     # FR-17 openai_compatible (D239): a release at least two weeks old. Brings httpx2 to runtime.
     "openai==3.45.0",
+    # FR-17 anthropic (D249): a release at least two weeks old. Its API version rejects temperature.
+    "anthropic==2.5.0",
 ]
 
 # Added with `uv add --dev`. Never needed at runtime: the image is built with --no-dev.
