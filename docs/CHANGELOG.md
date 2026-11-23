@@ -2174,3 +2174,91 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
 - Tests existentes que cambian: ninguno.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `ai-service/app/prompts/triage_v1.md`
   (solo el bloque del esquema; todavía no está en `main`), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Prueba manual con LLM real (2026-11-22)
+- Rama `chore/sprint-5-real-llm-trial`, la séptima y última del plan del Sprint 5 (`07` l.127, NFR-11, AC-20.4 sin
+  la matriz). El owner ejecutó las corridas con su `.env` sobre `dirty-1k` completo, subido desde `data/samples/`
+  (solo lectura). Aquí van solo agregados operativos (S5-15), sin comparar con `labels.csv`.
+  - Sin cambios de código ni de `triage_v1.md`: la condición para ajustar INVALID_TYPE no se dio.
+  - La prueba queda cerrada sin una tercera corrida.
+- Aprobación del owner: "Apruebo B7 chore/sprint-5-real-llm-trial: sonda de dirty-1k completo con Ollama qwen2.5:3b
+  y, si no cumple S5-16, con Haiku; latencia desde ai_call_log solo con SUCCESS, INVALID_RESPONSE y TIMEOUT,
+  CIRCUIT_OPEN aparte; hallazgos solo en docs/CHANGELOG.md; ajustes de triage_v1.md solo por señales de contrato y
+  política, cada uno con su propia frase, dentro de 3 h, incluido el de INVALID_TYPE si la sonda lo muestra; con las
+  decisiones D256 a D261."
+- Corrida 1, Ollama `qwen2.5:3b` (`openai_compatible`, solo CPU, `OLLAMA_CONTEXT_LENGTH=8192`, confirmado con
+  `ollama ps`):
+  - Lote `COMPLETED` en 201 s.
+  - 10 llamadas con `504 LLM_TIMEOUT` (el timeout por llamada de 20 s), 40 `CIRCUIT_OPEN` y 50 registros en
+    `AI_UNAVAILABLE`.
+  - STOP CHECK 0.
+  - **No pasa S5-16**, porque se abrió el circuito.
+  - El prompt ronda los 8k tokens de entrada (medido con Haiku, abajo), muy cerca de los 8192 de contexto
+    configurados. Con Ollama no hubo respuestas de las que medir tokens, así que no está verificado si su
+    tokenizador trunca el prompt; el supuesto de `04` §9 sigue sin verificar.
+- Corrida 2, Haiku 5.5 (`anthropic`): las diez llamadas con IA dieron `400` porque la API rechazó el esquema de
+  salida (el subesquema `{}` de `JsonValue`), y el resultado fue 40 `CIRCUIT_OPEN`, 50 `AI_UNAVAILABLE` y STOP CHECK 0,
+  sin coste. Fue la señal de parada de B7, que se corrigió en #64 (D262–D266).
+- Corrida 3, Haiku 5.5 con #64 (`LLM_MAX_OUTPUT_TOKENS=1024`, timeouts sin tocar). Datos de AC-20.4 sin la matriz:
+  - proveedor `anthropic`, modelo `claude-haiku-5-5`, prompt `triage_v1`;
+  - lote `COMPLETED` en 187,5 s: 1000 leídas, 950 directas, 27 autocorregidas, 23 en cuarentena;
+  - 45 solicitudes a la IA sin caché y 5 `CACHE_HIT`. En `ai_call_log`: 42 `SUCCESS` y 3 `HTTP_ERROR 502
+    LLM_INVALID_OUTPUT`;
+  - 51 llamadas al LLM (`llmCalls` medio 1,07): 39 primeras correctas, 6 primeras cortadas por `max_tokens`, 3
+    reparaciones correctas y 3 reparaciones cortadas por `max_tokens`;
+  - tokens: 8317 de entrada y 553 de salida de media por solicitud; en total, 349 304 de entrada y 23 229 de salida;
+  - S5-16: n 45, p50 3437 ms, p95 10395 ms, sin `CIRCUIT_OPEN`. **Pasa.** La latencia por llamada al LLM, en
+    `llm_call`, fue p50 3676 ms, p95 5469 ms y máximo 6070 ms;
+  - cuarentena: 20 `AI_REVIEW_REQUIRED` y 3 `AI_INVALID_RESPONSE`. Sin rechazos de política ni de verificación;
+  - correcciones aplicadas:
+
+    | Campo | Operación | Correcciones |
+    |---|---|---|
+    | `unit_price` | `PARSE_NUMBER` | 6 |
+    | `invoice_date` | `PARSE_DATE` | 6 |
+    | `customer_id` | `NULLIFY_TOKEN` | 3 |
+    | `customer_id` | `PARSE_NUMBER` | 3 |
+    | `country` | `MAP_TO_ENUM` | 3 |
+    | `country` | `NORMALIZE_CASE` | 3 |
+    | `invoice_no` | `TRIM` | 2 |
+    | `stock_code` | `TRIM` | 1 |
+
+  - STOP CHECK 0. La revisión manual del owner de 10 correcciones dio que todas salen de su operación;
+  - INVALID_TYPE siempre como `NEEDS_HUMAN_REVIEW` (1 `HIGH` y 1 `MEDIUM`), así que no hubo ajuste del prompt.
+- Costo (NFR-11): 0,06 USD en la corrida 3, según el owner. La fórmula es
+  `costo ≈ in_sum × precio_entrada + out_sum × precio_salida`, con 349 304 tokens de entrada y 23 229 de salida; el
+  precio por millón no se anota. Con Ollama el costo es 0.
+- Decisión S5-16: **Haiku 5.5 es el proveedor de la corrida de evaluación del Sprint 7.** Ollama `qwen2.5:3b` en CPU
+  no cabe en la configuración real (plazo de 25 s, umbral de llamada lenta de 20 s).
+- Hallazgos:
+  - 9 de las 51 llamadas se cortaron por `max_tokens` con `LLM_MAX_OUTPUT_TOKENS=1024`, y 3 de ellas acabaron en
+    `AI_INVALID_RESPONSE` porque también se cortó la reparación. **Recomendación: 2048 para la corrida de evaluación
+    del Sprint 7.** Los datos no permiten distinguir si el razonamiento por defecto del modelo contribuye (D253).
+  - La entrada media es de 8317 tokens por solicitud, por encima de lo estimado ("del orden de miles", `03` NFR-11).
+    Es la parte principal del costo, y deja a Ollama sin margen con un contexto de 8192.
+  - La consulta S5-16 del plan solo contaba `SUCCESS`, `INVALID_RESPONSE` y `TIMEOUT`, y se dejaba fuera los
+    `HTTP_ERROR`: los timeouts de `ai-service` llegan al pipeline como `HTTP_ERROR 504`. El owner usó
+    `outcome NOT IN ('CACHE_HIT', 'CIRCUIT_OPEN')`.
+  - No hubo ningún `refusal` ni ningún `bad_request` en la corrida 3.
+- Decisiones:
+  - D256: la sonda es `dirty-1k` completo, sin comparar con las etiquetas. El reporte de AC-20.4 con la matriz
+    `defect_type × outcome` sigue siendo del Sprint 7. | Reversible: sí | Aprobado por: owner.
+  - D257: la latencia de S5-16 sale de `ai_call_log`, que es lo que ve el circuit breaker; la de `llm_call` sirve de
+    contraste. Con circuito abierto el proveedor no pasa, y los timeouts no se tocan para la sonda. Se cuentan todos
+    los resultados salvo `CACHE_HIT` y `CIRCUIT_OPEN`. | Reversible: sí | Aprobado por: owner.
+  - D258: Ollama escucha en `172.17.0.1` (docker0) y no en `0.0.0.0`, con `OLLAMA_CONTEXT_LENGTH=8192`.
+    | Reversible: sí | Aprobado por: owner.
+  - D259: Haiku solo si Ollama no cumple S5-16, con el límite de gasto puesto antes y sin tocar los topes.
+    | Reversible: sí | Aprobado por: owner.
+  - D260: el prompt solo se ajusta por señales de contrato y política, con una frase por cambio y dentro de 3 h. No
+    hizo falta ninguno. | Reversible: sí | Aprobado por: owner.
+  - D261: los hallazgos van solo a este CHANGELOG (S5-15); nada en `reports/`. | Reversible: sí
+    | Aprobado por: owner.
+- Pendiente para `docs/sprint-5-close`:
+  - el diagrama de `04` l.176;
+  - la nota de `ANTHROPIC_BASE_URL` en `04` §9;
+  - el supuesto de contexto de Ollama en `04` §9, que sigue sin verificar;
+  - la casilla 49 de l.1812;
+  - `04` §9 marcado como verificado.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
