@@ -1809,7 +1809,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   Quedan sin marcar:
   - Pendiente: el invariante `read = direct + autoCorrected + quarantined` por muestra (l.42). Falta un test que pase
     `dirty-10k` y `raw-natural-2k` por el job.
-  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 5.
+  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 7 (`evaluate.py`, `07` l.149). <!-- corregido en el cierre del Sprint 5 -->
 - Punto de control de `07` l.190: se cumple al etiquetar `v0.4`, sin recortes. Si no se etiqueta, aplica la acción de
   esa fila.
 - Decisión del owner (2026-11-16): "Apruebo docs/sprint-4-close: la entrada "Sprint 4 — Cierre" en docs/CHANGELOG.md
@@ -2262,3 +2262,31 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   - `04` §9 marcado como verificado.
 - Tests existentes que cambian: ninguno.
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Cierre (2026-11-22)
+- Hecho (`07` §6): las siete ramas del plan y un fix, todas con la CI de `dev` en verde.
+  - #58 prompt `triage_v1` (FR-08); #59 plazo, reintento y reparación (NFR-07); #60 tope diario `LLM_MAX_CALLS_PER_DAY`
+    (AC-08.8); #61 redacción de lo que viaja a la IA (FR-07, NFR-15); #62 `openai_compatible` (FR-17, AC-17.4); #63
+    `anthropic` (FR-17); #64 esquema de salida concreto para structured outputs (FR-17); #65 prueba manual con LLM
+    real (NFR-11, S5-16).
+- Entregables (`07` l.130): el proveedor se cambia solo por `.env`, y `04` §9 queda verificada con la prueba de B7.
+- Recortado: nada en este sprint.
+- Decisiones nuevas que piden ADR: ninguna. Los dos proveedores son "nuevos proveedores LLM detrás de la interfaz"
+  (`09` l.167), y `openai` y `anthropic` son bibliotecas, no dependencias de infraestructura. El esquema concreto de
+  #64 endurece la frontera LLM → `ai-service` sin cambiar el contrato con el pipeline.
+- Horas reales (mismo método que los cierres anteriores: días con actividad en git desde `v0.4` × 2,5 h): 4 días (18,
+  19, 20 y 22 de noviembre), ≈ 10 h, frente a las 9–12 h de `07` l.118. Acumulado S1-S5: ≈ 92,5 h.
+- Punto de control del Sprint 6 (`07` l.191: "`v0.6` sin etiquetar, o horas acumuladas > 60 h"): por horas ya se
+  cumple (≈ 92,5 h). La decisión sobre FR-05 queda para el owner al cerrar el Sprint 6; un agente no recorta (`07` l.194).
+- Publicación de `triage_v1`. Decisión del owner (2026-11-22): "Publico triage_v1: a partir del merge de dev a main es
+  🔴 y cualquier cambio del prompt será triage_v2 (09 l.64, 09 l.192)."
+- Correcciones: la línea del cierre del Sprint 4 que atribuía la casilla 49 de `docs/08` al Sprint 5 (es del Sprint 7);
+  el diagrama de `04` l.176; y en `04` §9, la nota de `ANTHROPIC_BASE_URL`, el supuesto de contexto de Ollama (no
+  verificable en la prueba) y la marca de verificada.
+- Decisión del owner (2026-11-22): "Apruebo docs/sprint-5-close: la entrada "Sprint 5 — Cierre" en docs/CHANGELOG.md con las ramas #58 a #65, nada
+  recortado, ninguna decisión que pida ADR, horas reales de 4 días (18, 19, 20 y 22 de noviembre) ≈ 10 h, el punto de
+  control de 07 l.191 para decidir al cerrar el Sprint 6 y mi frase de publicación de triage_v1; la corrección de la
+  casilla 49 en el cierre del Sprint 4; en docs/04 el diagrama de l.176, las notas de ANTHROPIC_BASE_URL y del contexto
+  de Ollama en §9 y §9 marcada como verificada; y el cambio de la sección Status del README.md."
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
+  `docs/04-arquitectura.md`. `README.md` (sección Status), nombrado en la frase.

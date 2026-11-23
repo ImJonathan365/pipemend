@@ -173,7 +173,7 @@ sequenceDiagram
         alt fila inválida
             JOB->>AI: POST /v1/triage (X-Request-Id, X-Batch-Id)
             alt cache miss
-                AI->>LLM: prompt triage_v1 (temperature 0, JSON)
+                AI->>LLM: prompt triage_v1 + esquema JSON (temperature 0 solo con openai_compatible)
                 LLM-->>AI: JSON
                 AI->>AI: validar Pydantic + reglas duras
             end
@@ -323,6 +323,8 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 
 ## 9. Cómo cambiar de proveedor LLM
 
+> **Verificado en el Sprint 5** (prueba manual de B7, ver `CHANGELOG.md`): los pasos 1 a 4 se ejecutaron con Ollama (`openai_compatible`) y con Anthropic (Haiku 5.5) cambiando solo `.env` y recreando `ai-service`, sin tocar código ni `pipeline-service`. <!-- owner, 2026-11-22 -->
+
 1. Editar `.env`:
    ```dotenv
    # OpenAI
@@ -349,9 +351,9 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 
 > Los nombres de modelo no se fijan en el código ni en estos documentos: se configuran por `LLM_MODEL`. Usar un modelo que soporte salida JSON de forma fiable.
 
-> **Anthropic:** el JSON se pide con `output_config.format` (`json_schema`, el esquema de `LlmTriageOutput`), sin *tool use* ni *prefill*. No se envían `temperature` (NFR-13), `thinking` ni `effort`: los modelos que piensan por defecto gastan parte de `LLM_MAX_OUTPUT_TOKENS` en razonar, y la línea `llm_call` registra `stopReason` para vigilarlo. Un `stop_reason` `max_tokens` es una respuesta cortada y va a la reparación; `refusal` da `502 LLM_PROVIDER_ERROR` sin reparación. `LLM_BASE_URL` se ignora: se usa el endpoint por defecto del SDK. <!-- owner, 2026-11-20 -->
+> **Anthropic:** el JSON se pide con `output_config.format` (`json_schema`, el esquema de `LlmTriageOutput`), sin *tool use* ni *prefill*. No se envían `temperature` (NFR-13), `thinking` ni `effort`: los modelos que piensan por defecto gastan parte de `LLM_MAX_OUTPUT_TOKENS` en razonar, y la línea `llm_call` registra `stopReason` para vigilarlo. Un `stop_reason` `max_tokens` es una respuesta cortada y va a la reparación; `refusal` da `502 LLM_PROVIDER_ERROR` sin reparación. `LLM_BASE_URL` se ignora: se usa el endpoint por defecto del SDK, salvo que exista `ANTHROPIC_BASE_URL` en el entorno del proceso, que el SDK lee por su cuenta; `docker-compose.yml` no la inyecta. <!-- owner, 2026-11-20; 2026-11-22 -->
 
-> **Ollama:** `openai_compatible` pide `response_format: json_object` y `max_tokens`. La ventana de contexto la fija el servidor Ollama (no PipeMend) y, si es menor que el prompt, Ollama puede truncarlo sin avisar; se ajusta en el servidor (p. ej., `OLLAMA_CONTEXT_LENGTH`). Supuesto pendiente de verificar en la prueba manual del Sprint 5. <!-- owner, 2026-11-19 -->
+> **Ollama:** `openai_compatible` pide `response_format: json_object` y `max_tokens`. La ventana de contexto la fija el servidor Ollama (no PipeMend) y, si es menor que el prompt, Ollama puede truncarlo sin avisar; se ajusta en el servidor (p. ej., `OLLAMA_CONTEXT_LENGTH`). No se pudo verificar en la prueba del Sprint 5: con qwen2.5:3b en CPU no hubo respuestas de las que medir tokens. Con Haiku el prompt rondó los 8,3k tokens de entrada (con su tokenizador; otros modelos cuentan distinto), así que un contexto de 8192 probablemente no deja margen. <!-- owner, 2026-11-19; 2026-11-22 -->
 
 ### Cómo agregar un proveedor nuevo
 
