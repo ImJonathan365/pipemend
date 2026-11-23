@@ -2111,3 +2111,66 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   (NFR-11, NFR-13), 🟠 `docs/04-arquitectura.md` (l.253, §8 y §9), 🟠 `.env.example` (un comentario), 🟠
   `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock` (dependencia nueva, sin cambio de versión
   mayor).
+
+## Sprint 5 — Esquema de salida concreto para structured outputs (2026-11-22)
+- Rama `fix/FR-17-anthropic-schema` (FR-17, AC-17.1), abierta por la señal de parada de B7. La API de Anthropic
+  rechazó el esquema de salida: "output_config.format.schema: Empty schema ({}) that accepts any JSON value is not
+  supported. Please specify a concrete type." El origen era `parameters: dict[str, JsonValue]` en `LlmCorrection`,
+  que generaba `"JsonValue": {}` y un `additionalProperties` que era un esquema y no `false`.
+  - `LlmParameters` concreto según `06` l.222: `sourcePattern`, `decimalSeparator` y `groupingSeparator` (string o
+    null) como string, y `strippedSymbols` como array de string, todas opcionales y sin claves extra; `{}` para las
+    demás operaciones. El bloque `## Output schema` de `triage_v1.md` se regenera, y los cuatro few-shot siguen
+    validando.
+  - El contrato público con el pipeline no cambia: `Correction.parameters` sigue siendo `dict[str, JsonValue]` en
+    `contracts.py`, y `contracts/` queda igual.
+  - Cambio de comportamiento: un `parameters` con una clave desconocida o un tipo incorrecto pasa a ser salida
+    inválida y va a la reparación. Antes pasaba la frontera y lo rechazaban la política o los verificadores.
+  - La primera petición con un esquema nuevo lo compila en la API, y la caché dura 24 h. La comprobación manual del
+    owner lo deja compilado antes de volver a B7, para que esa compilación no caiga en una llamada medida.
+- Aprobación del owner (2026-11-22): "Apruebo fix/FR-17-anthropic-schema: LlmParameters como TypedDict con
+  sourcePattern, decimalSeparator, groupingSeparator (string o null) y strippedSymbols (array de string), opcionales y
+  sin claves extra, en lugar de JsonValue en LlmCorrection.parameters, un solo esquema para todos los proveedores, el
+  bloque Output schema de triage_v1.md regenerado, el test que recorre el esquema enviado sin subesquemas vacíos y con
+  additionalProperties siempre false, sin cambios en contracts.py ni contracts/, y los cambios 🟠 en triage_v1.md y
+  docs/CHANGELOG.md, con las decisiones D262 a D265."
+- Aprobación del owner (2026-11-22), tras la primera comprobación manual: "Apruebo en fix/FR-17-anthropic-schema quitar
+  minimum/maximum de confidence en el esquema de LlmTriageOutput y comprobar el rango 0-1 con un validador de
+  Pydantic que no aparezca en el esquema, regenerando el bloque Output schema de triage_v1.md, con sus tests e
+  inyecciones."
+- Decisiones:
+  - D262: un solo esquema concreto en `LlmTriageOutput` para todos los proveedores, sin transformarlo en el adaptador
+    de Anthropic. El bloque del prompt sigue siendo igual al esquema enviado. | Reversible: sí | Aprobado por: owner.
+  - D263: `LlmParameters` es un `TypedDict` con las claves opcionales, no una unión por operación. Qué claves
+    necesita cada operación lo comprueban los verificadores (`02` §4). Va con un comentario y no con un docstring,
+    porque el docstring viajaría al LLM como `description` del esquema. | Reversible: sí | Aprobado por: owner.
+  - D264: un test recorre el esquema enviado. Falla si un subesquema acepta cualquier valor (`{}`, o solo
+    anotaciones como `title`, que es como sale `Any` con Pydantic) o si algún objeto no tiene
+    `additionalProperties: false`. | Reversible: sí | Aprobado por: owner.
+  - D265: `minimum`/`maximum` de `confidence` no se tocan. La documentación de structured outputs las da como no
+    soportadas, y es un riesgo sin verificar que la comprobación manual aísla. Queda sustituida por D266.
+    | Reversible: sí | Aprobado por: owner.
+  - D266: la primera comprobación manual del owner (mensaje sintético, imagen de esta rama, Haiku 5.5) dio:
+    - esquema completo: HTTP 400 "output_config.format.schema: For 'number' type, properties maximum, minimum are not
+      supported". El `{}` ya no aparece;
+    - sonda `minimum`/`maximum`: HTTP 400 con el mismo mensaje;
+    - sonda de propiedad opcional: OK, `stop_reason=end_turn`;
+    - sonda de `description`: OK, `stop_reason=end_turn`.
+
+    Por eso `confidence` pierde `ge`/`le` en `LlmAnalysis`, y el rango 0–1 lo comprueba un `AfterValidator` que no
+    aparece en el esquema. El prompt ya dice "a number from 0 to 1". El test que recorre el esquema falla también si
+    un `number`, `integer` o `string` lleva `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+    `multipleOf`, `minLength` o `maxLength`. `Analysis` en `contracts.py` conserva su `ge`/`le`: el contrato público
+    no cambia.
+
+    Resultado: el esquema funciona de punta a punta con Haiku 5.5. El owner hizo una corrida de `dirty-1k` con la
+    imagen de esta rama:
+    - lote `COMPLETED`: 1000 leídas, 950 directas, 27 autocorregidas, 23 en cuarentena, 45 llamadas a la IA;
+    - ningún 400 ni ningún `bad_request`: `ai_call_log` no tiene `HTTP_ERROR 400`;
+    - política y verificación sin rechazos; STOP CHECK 0.
+
+    Los demás hallazgos de esa corrida van a la entrada de B7. | Reversible: sí | Aprobado por: owner.
+- Riesgos: la propiedad opcional y la `description` pasaron la comprobación manual con Haiku 5.5, y el esquema
+  completo funcionó en la corrida de `dirty-1k`. No queda ningún riesgo conocido del esquema.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `ai-service/app/prompts/triage_v1.md`
+  (solo el bloque del esquema; todavía no está en `main`), 🟠 `docs/CHANGELOG.md`.
