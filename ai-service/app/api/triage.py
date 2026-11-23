@@ -10,6 +10,7 @@ from app.api.errors import (
     problem_schema,
 )
 from app.api.system import SettingsDep
+from app.config import Settings
 from app.domain.contracts import TriageRequest, TriageResponse
 from app.providers.base import LLMProvider, ProviderNotConfiguredError
 from app.providers.factory import create_provider
@@ -17,7 +18,7 @@ from app.services.triage_service import TriageService
 
 router = APIRouter(tags=["triage"])
 
-# All of docs/06 A.5, also what only Sprint 5 emits (429, 504).
+# All of docs/06 A.5.
 _ERRORS = {
     400: "INVALID_REQUEST",
     422: "VALIDATION_ERROR",
@@ -36,10 +37,14 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def get_provider(settings: SettingsDep) -> LLMProvider:
+def get_provider(settings: SettingsDep, request: Request) -> LLMProvider:
     if not settings.provider_configured:
         raise ProviderNotConfiguredError(f"LLM_PROVIDER={settings.llm_provider.value} has no key")
-    return create_provider(settings)
+    # D246: one per app and settings, so its connection pool lives as long as the app.
+    providers: dict[Settings, LLMProvider] = request.app.state.providers
+    if settings not in providers:
+        providers[settings] = create_provider(settings)
+    return providers[settings]
 
 
 @router.post("/v1/triage", summary="Analyse one invalid record", responses=_ERROR_RESPONSES)
@@ -53,5 +58,10 @@ async def triage(
     """AC-08.1. It only proposes: the policy in pipeline-service decides (ADR-0003)."""
     if header_id is not None and header_id != body.request_id:
         raise RequestIdMismatchError
-    service = TriageService(provider, settings, request.app.state.triage_cache)
+    service = TriageService(
+        provider,
+        settings,
+        request.app.state.triage_cache,
+        daily_calls=request.app.state.daily_calls,
+    )
     return await service.triage(body)

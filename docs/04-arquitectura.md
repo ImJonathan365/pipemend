@@ -173,7 +173,7 @@ sequenceDiagram
         alt fila inválida
             JOB->>AI: POST /v1/triage (X-Request-Id, X-Batch-Id)
             alt cache miss
-                AI->>LLM: prompt triage_v1 (temperature 0, JSON)
+                AI->>LLM: prompt triage_v1 + esquema JSON (temperature 0 solo con openai_compatible)
                 LLM-->>AI: JSON
                 AI->>AI: validar Pydantic + reglas duras
             end
@@ -246,12 +246,12 @@ ai-service/app
 
 <!-- rev: R-09, R-10, R-11, R-20, R-21 -->
 Flujo de `triage_service`:
-1. Iniciar el plazo total (`AI_REQUEST_DEADLINE_SECONDS`). Llega en el Sprint 5 (`07`). <!-- owner, 2026-11-01 -->
+1. Iniciar el plazo total (`AI_REQUEST_DEADLINE_SECONDS`), que cubre también la búsqueda en caché. <!-- owner, 2026-11-19 -->
 2. Calcular la clave de caché de cada violación a nivel campo (NFR-11). Si **todas** las violaciones son a nivel campo y están en caché → armar `summary` con plantilla determinista y responder con `cacheHit = true` sin LLM (AC-08.4 d).
-3. Si hay que llamar al LLM: verificar el tope diario (`LLM_MAX_CALLS_PER_DAY`); si se alcanzó → `429 LLM_BUDGET_EXHAUSTED`. Llega en el Sprint 5 (`07`); con `LLM_PROVIDER=mock` no aplica (AC-08.8). <!-- owner, 2026-11-01 -->
-4. Construir prompt desde `prompts/triage_v{n}.md` con el contexto (JSON delimitado como dato, NFR-14) y el JSON Schema de salida. Hasta el Sprint 5 no existe `triage_v1.md` y el prompt de sistema va vacío. Solo es aceptable porque un proveedor real no puede llegar a este código: `create_provider` solo construye el mock, que lo ignora. El Sprint 5 debe cumplir `09` §7.11 al añadir los proveedores reales. <!-- owner, 2026-11-01 -->
-5. Llamar a `await provider.complete_json(...)` dentro de `asyncio.timeout(min(LLM_TIMEOUT_SECONDS, restante))`. `temperature=0` se fija en el constructor de cada proveedor real; ni el timeout ni la temperatura son parte de la firma (§9). `asyncio.timeout` llega con el plazo total en el Sprint 5 (`07`); hasta entonces, solo `await`. <!-- owner, 2026-11-01 -->
-6. Validar con Pydantic en modo estricto (`extra="forbid"` en los modelos de **salida del LLM**: un campo inventado por el LLM es salida inválida). Si falla y queda plazo: **un** reintento de reparación enviando el error de validación. Si vuelve a fallar → `502 LLM_INVALID_OUTPUT`. También es salida inválida que `analyses` no sean las violaciones enviadas, en el mismo orden y con el mismo `field` (`06` A.1). La reparación llega en el Sprint 5 (`07`); hasta entonces, la primera salida inválida ya es el error. <!-- owner, 2026-11-01 -->
+3. Antes de **cada** llamada al LLM (primera, reintento y reparación): verificar el tope diario (`LLM_MAX_CALLS_PER_DAY`, contador en memoria compartido por la app que se reinicia a medianoche UTC); si se alcanzó → `429 LLM_BUDGET_EXHAUSTED`, también a mitad de una solicitud, sin llamar. Cuentan todas las llamadas intentadas, también las que fallan. Con `LLM_PROVIDER=mock` no aplica (AC-08.8). <!-- owner, 2026-11-19 -->
+4. Construir prompt: el de sistema es `prompts/{PROMPT_VERSION_TRIAGE}.md` tal cual (incluye el JSON Schema de salida y declara que el bloque de contexto es dato, `09` §7.11), y el de usuario es el contexto (JSON delimitado como dato, NFR-14). Si el archivo de la versión configurada no existe, el servicio no arranca. El mock recibe el prompt de sistema y lo ignora. <!-- owner, 2026-11-18 -->
+5. Llamar a `await provider.complete_json(...)` dentro de `asyncio.timeout(min(LLM_TIMEOUT_SECONDS, restante))`. `temperature=0` se fija en el constructor de `openai_compatible`; `anthropic` no la envía, y el servicio no arranca con `LLM_PROVIDER=anthropic` y `LLM_TEMPERATURE` distinto de 0 (NFR-13). Ni el timeout ni la temperatura son parte de la firma (§9). Si quedan menos de 3 s del plazo no se intenta otra llamada (NFR-07). Un timeout no se reintenta (`504 LLM_TIMEOUT`); 5xx o error de red se reintentan una vez, y 429 una vez si su `Retry-After` cabe en el plazo (si no, `429 RATE_LIMITED`); fallar de nuevo da `502 LLM_PROVIDER_ERROR` o `429 RATE_LIMITED`, y un error de autenticación da `502 LLM_PROVIDER_ERROR` sin reintento. Todas las llamadas (primera, reintento y reparación) pasan por un único punto, y nunca son más de 3. <!-- owner, 2026-11-19 -->
+6. Validar con Pydantic en modo estricto (`extra="forbid"` en los modelos de **salida del LLM**: un campo inventado por el LLM es salida inválida). Si falla y queda plazo: **un** reintento de reparación que repite el bloque de contexto y añade un bloque `<validation_errors>` (JSON con `loc`, `type` y `msg` de cada error, nunca el valor que falló), declarado como dato; la instrucción de reparación está en el prompt versionado. Si vuelve a fallar → `502 LLM_INVALID_OUTPUT`. También es salida inválida que `analyses` no sean las violaciones enviadas, en el mismo orden y con el mismo `field` (`06` A.1). <!-- owner, 2026-11-19 -->
 7. Aplicar `rules.py`: forzar `NEEDS_HUMAN_REVIEW` para códigos no corregibles; aplicar el piso de severidad por `errorCode` (`06` A.1); bajar a `NEEDS_HUMAN_REVIEW` si `AUTO_FIXABLE` no trae `correction`; recortar `explanation` y `summary` a su longitud máxima (recortar texto no es un error de contrato; `suggestedHumanAction` no tiene máximo en `06`, y lo acota `LLM_MAX_OUTPUT_TOKENS`); recalcular `maxSeverity` y `recordDecision`. <!-- owner, 2026-11-01 -->
 8. Guardar en caché los análisis a nivel campo que cumplan AC-08.4 (c) y responder con `meta` (incluye `llmCalls`).
 
@@ -314,7 +314,7 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 | `AI_REQUEST_DEADLINE_SECONDS` | `25` | NFR-07 (plazo total por solicitud) |
 | `LLM_MAX_CALLS_PER_DAY` | `2000` | AC-08.8 (no aplica a `mock`) |
 | `LLM_MAX_OUTPUT_TOKENS` | `1024` | NFR-11 |
-| `LLM_TEMPERATURE` | `0` | NFR-13 |
+| `LLM_TEMPERATURE` | `0` | NFR-13. Solo `openai_compatible`; con `anthropic` debe ser 0 (no se envía) |
 | `PROMPT_VERSION_TRIAGE` | `triage_v1` | Versión de prompt activa |
 | `PROMPT_VERSION_SCHEMA` | `schema_drift_v1` | Versión de prompt activa |
 | `AI_EXPLANATION_LANGUAGE` | `es` | Idioma de las explicaciones (`es`/`en`) |
@@ -322,6 +322,8 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 | `TRIAGE_CACHE_TTL_SECONDS` | `86400` | NFR-11 |
 
 ## 9. Cómo cambiar de proveedor LLM
+
+> **Verificado en el Sprint 5** (prueba manual de B7, ver `CHANGELOG.md`): los pasos 1 a 4 se ejecutaron con Ollama (`openai_compatible`) y con Anthropic (Haiku 5.5) cambiando solo `.env` y recreando `ai-service`, sin tocar código ni `pipeline-service`. <!-- owner, 2026-11-22 -->
 
 1. Editar `.env`:
    ```dotenv
@@ -334,7 +336,7 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
    # Ollama local (sin costo)
    LLM_PROVIDER=openai_compatible
    LLM_MODEL=<modelo-local, p. ej. llama3.1:8b>
-   LLM_API_KEY=ollama        # valor dummy si el cliente lo exige
+   LLM_API_KEY=ollama        # cualquier valor no vacío: sin clave el servicio queda degraded (AC-17.3)
    LLM_BASE_URL=http://host.docker.internal:11434/v1
 
    # Anthropic
@@ -349,11 +351,15 @@ Todas las variables viven en `.env` (plantilla en `.env.example`).
 
 > Los nombres de modelo no se fijan en el código ni en estos documentos: se configuran por `LLM_MODEL`. Usar un modelo que soporte salida JSON de forma fiable.
 
+> **Anthropic:** el JSON se pide con `output_config.format` (`json_schema`, el esquema de `LlmTriageOutput`), sin *tool use* ni *prefill*. No se envían `temperature` (NFR-13), `thinking` ni `effort`: los modelos que piensan por defecto gastan parte de `LLM_MAX_OUTPUT_TOKENS` en razonar, y la línea `llm_call` registra `stopReason` para vigilarlo. Un `stop_reason` `max_tokens` es una respuesta cortada y va a la reparación; `refusal` da `502 LLM_PROVIDER_ERROR` sin reparación. `LLM_BASE_URL` se ignora: se usa el endpoint por defecto del SDK, salvo que exista `ANTHROPIC_BASE_URL` en el entorno del proceso, que el SDK lee por su cuenta; `docker-compose.yml` no la inyecta. <!-- owner, 2026-11-20; 2026-11-22 -->
+
+> **Ollama:** `openai_compatible` pide `response_format: json_object` y `max_tokens`. La ventana de contexto la fija el servidor Ollama (no PipeMend) y, si es menor que el prompt, Ollama puede truncarlo sin avisar; se ajusta en el servidor (p. ej., `OLLAMA_CONTEXT_LENGTH`). No se pudo verificar en la prueba del Sprint 5: con qwen2.5:3b en CPU no hubo respuestas de las que medir tokens. Con Haiku el prompt rondó los 8,3k tokens de entrada (con su tokenizador; otros modelos cuentan distinto), así que un contexto de 8192 probablemente no deja margen. <!-- owner, 2026-11-19; 2026-11-22 -->
+
 ### Cómo agregar un proveedor nuevo
 
-1. Crear `providers/<nombre>.py` implementando el `Protocol` `LLMProvider` (`async complete_json(system_prompt, user_prompt, json_schema) -> ProviderResult(content: dict, usage: Usage | None)`; `async` por NFR-10). <!-- owner, 2026-11-01 -->
+1. Crear `providers/<nombre>.py` implementando el `Protocol` `LLMProvider` (`async complete_json(system_prompt, user_prompt, json_schema) -> ProviderResult(content: dict, usage: Usage | None, stop_reason: str | None)`; `async` por NFR-10). <!-- owner, 2026-11-01; 2026-11-20 -->
 2. Registrarlo en `providers/factory.py` bajo un nuevo valor de `LLM_PROVIDER`.
-3. Traducir errores del SDK a las excepciones propias (`ProviderTimeout`, `ProviderUnavailable`, `ProviderRateLimited`, `ProviderAuthError`).
+3. Traducir errores del SDK a las excepciones propias (`ProviderTimeout`, `ProviderUnavailable`, `ProviderRateLimited`, `ProviderAuthError`, `ProviderBadRequest` para cualquier otro 4xx, y `ProviderInvalidOutput` si la respuesta no es un objeto JSON o se cortó por el límite de tokens), con los reintentos del SDK desactivados: los reintentos son de `triage_service` (NFR-07). <!-- owner, 2026-11-19 -->
 4. Tests con respuestas simuladas del SDK (sin red).
 5. Actualizar esta sección y `.env.example`. No requiere ADR (es un adaptador nuevo detrás de una interfaz existente); **sí** lo requiere cambiar la interfaz o el contrato.
 

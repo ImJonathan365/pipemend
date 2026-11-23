@@ -1809,7 +1809,7 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   Quedan sin marcar:
   - Pendiente: el invariante `read = direct + autoCorrected + quarantined` por muestra (l.42). Falta un test que pase
     `dirty-10k` y `raw-natural-2k` por el job.
-  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 5.
+  - El reporte de evaluación con un LLM real (l.49), que es del Sprint 7 (`evaluate.py`, `07` l.149). <!-- corregido en el cierre del Sprint 5 -->
 - Punto de control de `07` l.190: se cumple al etiquetar `v0.4`, sin recortes. Si no se etiqueta, aplica la acción de
   esa fila.
 - Decisión del owner (2026-11-16): "Apruebo docs/sprint-4-close: la entrada "Sprint 4 — Cierre" en docs/CHANGELOG.md
@@ -1819,3 +1819,474 @@ Registro semanal (ver `07-plan-de-sprints.md` §6). Formato: hecho / recortado /
   el cambio de la sección Status del README.md."
 - Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
   `docs/08-definition-of-done.md`. `README.md` (sección Status), nombrado en la frase.
+
+## Sprint 5 — Prompt `triage_v1` (2026-11-18)
+- Rama `feat/FR-08-triage-prompt-v1`, la primera del plan del Sprint 5 (FR-08, AC-08.1, AC-08.3, NFR-12, NFR-14, `07`
+  l.122). Nuevo `ai-service/app/prompts/triage_v1.md` en inglés: rol, bloque de contexto declarado como dato (`09`
+  §7.11), formato de salida, esquema de salida literal, reglas duras, escala y pisos de severidad, allowlist de
+  operaciones con sus campos y `parameters`, y 4 ejemplos *few-shot* inventados. Mide 11 609 caracteres.
+  - El servicio envía como prompt de sistema el archivo de `PROMPT_VERSION_TRIAGE` tal cual (`04` §6.2, paso 4), y
+    `create_app` lo carga al arrancar: si falta, el servicio no arranca. El mock lo recibe y lo ignora (AC-17.2).
+  - `triage_v1.md` pasa a 🔴 cuando llegue a `main` (`09` §2.1). Hasta cerrar la prueba manual del Sprint 5 (B7) se
+    puede ajustar en `dev`; no se fusiona `dev` → `main` antes (decisión S5-5 del plan del sprint).
+- Decisión del owner (2026-11-18): "Apruebo B1 feat/FR-08-triage-prompt-v1: triage_v1.md en inglés con el esquema
+  literal sin títulos, la allowlist, los pisos de severidad y 4 few-shot sintéticos; el cargador que impide arrancar si
+  falta el prompt; el cambio del test test_the_prompt_carries_the_request_as_data_and_the_output_schema; y los cambios
+  🟠 en docs/03 l.153, docs/04 l.252 y docs/CHANGELOG.md, con las decisiones D210 a D216."
+- Decisión del owner (2026-11-18): "Apruebo cambiar en B1 la preparación de
+  test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock con un triage_v7.md en tmp_path y
+  monkeypatch de system_prompt.PROMPTS, sin tocar sus aserciones, y el cargador en app/services/system_prompt.py."
+- Decisiones:
+  - D210: el prompt está en inglés; el idioma de `explanation`, `suggestedHumanAction` y `summary` lo fija
+    `options.explanationLanguage` de la solicitud. | Reversible: sí (con `triage_v2`) | Aprobado por: owner.
+  - D211: el catálogo de países no va en el prompt, sino en `expected.allowedValues` de cada solicitud con
+    `INVALID_ENUM_VALUE` (AC-07.3), para no pagar sus tokens en todas las llamadas. `03` l.153 se actualiza.
+    | Reversible: sí | Aprobado por: owner.
+  - D212: el esquema de salida va literal: es el de `LlmTriageOutput` sin las claves `title`. Un test lo compara con el
+    modelo, así que cambiar el modelo obliga a crear `triage_v2` (NFR-12). | Reversible: sí | Aprobado por: owner.
+  - D213: los ejemplos *few-shot* son inventados a partir de los ejemplos de `02` y `06`, nunca sacados de `data/`, para
+    que la evaluación con LLM real no sea circular. Un test comprueba que cada uno valida con `LlmTriageOutput`, que
+    `rules.py` lo deja igual, que `originalValue` es `receivedValue` y que los de nivel campo se pueden cachear
+    (AC-08.4 c). | Reversible: sí | Aprobado por: owner.
+  - D214: si falta el prompt de la versión configurada, el servicio no arranca: es una imagen rota, no un proveedor sin
+    configurar al que corresponda `degraded` (AC-17.3). | Reversible: sí | Aprobado por: owner.
+  - D215: el mock recibe el prompt real y lo ignora, sin ningún cambio. | Reversible: sí | Aprobado por: owner.
+  - D216: no hay test de longitud del prompt, porque el umbral sería inventado; la longitud se mide y se anota.
+    | Reversible: sí | Aprobado por: owner.
+  - D217: el cargador vive en `app/services/system_prompt.py` y no en `app/domain/triage_prompt.py`, como decía el
+    plan. El mock importa `triage_prompt`, y el guardián de AC-17.2
+    (`test_the_mock_cannot_read_files_or_reach_the_network[triage_prompt]`) prohíbe que ese módulo lea archivos. Se
+    movió el cargador en vez de relajar el guardián. Acepta solo versiones con la forma `nombre_vN`, para que
+    `PROMPT_VERSION_TRIAGE` no pueda salir de `app/prompts`. | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_the_prompt_carries_the_request_as_data_and_the_output_schema`: la aserción `system_prompt == ""` pasa a ser
+    igualdad exacta con el contenido de `triage_v1.md`, y el docstring deja de decir "stays empty until Sprint 5".
+  - `test_meta_traces_the_answer_with_the_settings_and_no_tokens_from_the_mock`: solo cambia la preparación. Crea
+    `triage_v7.md` en `tmp_path` y apunta `system_prompt.PROMPTS` a esa carpeta; las aserciones no cambian.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/03-requisitos-no-funcionales.md`
+  (l.153), 🟠 `docs/04-arquitectura.md` (§6.2, paso 4), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Plazo, reintento y reparación en `ai-service` (2026-11-19)
+- Rama `feat/FR-08-ai-resilience`, la segunda del plan del Sprint 5 (FR-08, AC-08.2, NFR-07, NFR-11, `06` A.5; `07`
+  l.125, la parte de tokens y latencia de l.126 y el plazo total de l.128). `TriageService` aplica el plazo total
+  `AI_REQUEST_DEADLINE_SECONDS` desde que entra la solicitud, un timeout por llamada de
+  `min(LLM_TIMEOUT_SECONDS, restante)` y la regla de no intentar otra llamada con menos de 3 s (`03` l.94).
+  - Un reintento transitorio: 5xx o red sin espera, y 429 esperando su `Retry-After` solo si deja al menos 3 s.
+    Agotado, responde `502 LLM_PROVIDER_ERROR` o `429 RATE_LIMITED`. Un error de autenticación da
+    `502 LLM_PROVIDER_ERROR` sin reintento, y un timeout `504 LLM_TIMEOUT` sin reintento.
+  - Una reparación cuando la salida no valida o sus `analyses` no son las violaciones enviadas; si vuelve a fallar,
+    `502 LLM_INVALID_OUTPUT`.
+  - Todas las llamadas (primera, reintento y reparación) pasan por `TriageService._call`, el punto donde B3 añadirá la
+    comprobación del tope diario antes de cada llamada (S5-10).
+  - `meta.llmCalls` cuenta las llamadas reales, también las fallidas; con el mock sigue en 0. Los tokens se suman entre
+    llamadas.
+  - Nueva línea de log `llm_call` por llamada al proveedor.
+  - Nueva sección "Repair" en `triage_v1.md`, que todavía no está en `main`.
+- Decisión del owner (2026-11-19): "Apruebo B2 feat/FR-08-ai-resilience: plazo total y timeout por llamada con la regla
+  de 3 s, un reintento transitorio sin reintentar el timeout, una reparación con el bloque <validation_errors> y la
+  sección Repair en triage_v1.md, el máximo de 3 llamadas, llmCalls y tokens sumados, el log llm_call, los handlers de
+  504/429/502, el cambio del test test_an_invalid_output_raises_and_stores_nothing, y los cambios 🟠 en docs/04 §6.2 y
+  docs/CHANGELOG.md, con las decisiones D218 a D224."
+- Decisiones:
+  - D218: un timeout no se reintenta. Tras 20 s quedan unos 5 s de plazo, que casi nunca bastan, y con un proveedor de
+    pago sería otra llamada cobrada; NFR-07 nombra 429, 5xx y red. | Reversible: sí | Aprobado por: owner.
+  - D219: la reparación repite el bloque de contexto intacto y añade `<validation_errors>` con `loc`, `type` y `msg` de
+    cada error, nunca el valor que falló, con `<` escapado y declarado como dato. La instrucción va en la sección
+    "Repair" del prompt versionado (NFR-12); el código no añade texto libre. No se reenvía la respuesta anterior. Los
+    marcadores viven en `triage_prompt.py` y el render en `triage_service.py`, porque el guardián de AC-17.2 no deja a
+    `triage_prompt` importar `json`. | Reversible: sí | Aprobado por: owner.
+  - D220: `llmCalls` cuenta cada llamada al proveedor real, también las fallidas, y vale 0 con el mock (`06` l.181).
+    Los tokens se suman sobre las llamadas que los informan; si ninguna lo hace, `null`. | Reversible: sí
+    | Aprobado por: owner.
+  - D221: el plazo cubre también la búsqueda en caché, y un acierto de caché no llama a nadie. | Reversible: sí
+    | Aprobado por: owner.
+  - D222: `TriageService` recibe `clock` y `sleep` como parámetros solo por nombre, con `time.monotonic` y
+    `asyncio.sleep` por defecto; los tests no esperan de verdad salvo dos timeouts reales de 1 s.
+    | Reversible: sí | Aprobado por: owner.
+  - D223: el umbral de 3 s y el máximo de 3 llamadas son constantes con su cita a `03` NFR-07, sin variable nueva. El
+    máximo queda como defensa en profundidad, porque ya lo implican el reintento único y la reparación única: la
+    inyección que lo quita no hace fallar ningún test. | Reversible: sí | Aprobado por: owner.
+  - D224: una línea `llm_call` por llamada con `attempt`, `outcome`, `latencyMs`, tokens, `provider`, `model` y
+    `promptVersion`; nunca contenido, mensajes de excepción ni valores de la fila. Es la medida de latencia de B7.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_an_invalid_output_raises_and_stores_nothing`: `provider.calls` pasa de 1 a 2, porque hay una reparación antes
+    del error, y el docstring deja de decir que la reparación es del Sprint 5. Sigue comprobando el error y la caché
+    vacía.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, pasos 1,
+  5 y 6), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Tope diario de llamadas al LLM (2026-11-19)
+- Rama `feat/FR-08-daily-cap`, la tercera del plan del Sprint 5 (FR-08, AC-08.8, NFR-11, NFR-17; `07` l.128, la
+  parte del tope diario). `TriageService._call` reserva una llamada en `DailyCallCounter` antes de cada llamada real
+  al LLM: la primera, el reintento y la reparación (S5-10). Si `LLM_MAX_CALLS_PER_DAY` ya se alcanzó, responde
+  `429 LLM_BUDGET_EXHAUSTED` sin llamar al proveedor, también a mitad de una solicitud.
+  - Un acierto de caché sigue respondiendo, porque la caché se consulta antes de `_call`. El mock no reserva.
+  - El contador vive en `app.state.daily_calls` (uno por app, como la caché) y se reinicia a medianoche UTC o al
+    reiniciar el proceso. `/v1/info` devuelve su valor en `limits.llmCallsToday`.
+  - `LLM_MAX_CALLS_PER_DAY` menor que 1 impide arrancar.
+  - Pendiente del Sprint 7: AC-08.8 también cubre `/v1/schema-drift/analyze`. Cuando exista, debe usar este mismo
+    contador de `app.state`, no uno propio.
+- Decisión del owner (2026-11-19): "Apruebo B3 feat/FR-08-daily-cap: DailyCallCounter en app.state con reinicio a
+  medianoche UTC, la reserva en TriageService._call antes de cada llamada real con 429 LLM_BUDGET_EXHAUSTED también a
+  mitad de solicitud, el mock exento, llmCallsToday real en /v1/info, LLM_MAX_CALLS_PER_DAY >= 1, los cambios de
+  docstring en los dos test_the_daily_cap_does_not_apply_to_the_mock, y los cambios 🟠 en docs/04 §6.2 paso 3 y
+  docs/CHANGELOG.md, con las decisiones D225 a D231."
+- Decisiones:
+  - D225: `DailyCallCounter` en `services/daily_cap.py`, guardado en `app.state`. Reservar comprueba y suma sin ningún
+    `await` en medio, así que dos solicitudes no pueden tomar la última llamada; el `Dockerfile` arranca un único
+    worker. El tope se pasa en cada reserva desde los `Settings` de la solicitud, en vez de fijarse al crear el
+    contador. | Reversible: sí | Aprobado por: owner.
+  - D226: cuenta toda llamada real intentada, también las que fallan; la llamada rechazada por el tope no cuenta.
+    | Reversible: sí | Aprobado por: owner.
+  - D227: el día es la fecha UTC del reloj inyectado, comparada al reservar o al leer; sin tareas en segundo plano.
+    | Reversible: sí | Aprobado por: owner.
+  - D228: el mock está exento: no reserva, y `llmCallsToday` queda en 0. | Reversible: sí | Aprobado por: owner.
+  - D229: `TriageService` recibe `daily_calls` solo por nombre; si no se pasa, crea uno nuevo, nunca un "sin tope".
+    La API pasa el de `app.state`, y un test lo comprueba. | Reversible: sí | Aprobado por: owner.
+  - D230: `LLM_MAX_CALLS_PER_DAY` debe ser >= 1, igual que D206 con `AI_MAX_CALLS_PER_BATCH`. | Reversible: sí
+    | Aprobado por: owner.
+  - D231: un rechazo escribe una línea `llm_budget_exhausted` con `attempt`, y no `llm_call`, porque no hubo llamada.
+    | Reversible: sí | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_triage_service.py::test_the_daily_cap_does_not_apply_to_the_mock`: el docstring deja de decir que el tope es
+    del Sprint 5. El de `test_triage_api.py` no tenía texto obsoleto y no se tocó. Ninguna aserción cambia.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§6.2, paso 3),
+  🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Redacción de lo que viaja a la IA (2026-11-19)
+- Rama `feat/FR-07-redaction`, la cuarta del plan del Sprint 5 (FR-07, AC-07.1, AC-07.4, NFR-15; `07` l.126, la parte
+  de redacción). `TriageRequestBuilder` aplica `RecordRedaction` al `record.raw` que viaja a `ai-service`.
+  - Con `AI_SEND_FULL_RECORD=true` (default), cada campo de `AI_REDACT_FIELDS` (default `customer_id`) viaja como
+    `"[REDACTED]"`, salvo que la solicitud traiga una violación de ese campo.
+  - Con `false`, solo viajan las columnas de las violaciones a nivel campo, y una fila `MALFORMED_ROW` envía `{}`.
+  - Con `true`, `_rawLine` viaja sin redactar: es la limitación de AC-07.4, que el README del Sprint 8 debe recoger.
+  - `quarantine_record.raw_payload` guarda la fila tal como se leyó.
+  - Claves nuevas en `application.yml`: `pipemend.ai.privacy.redact-fields` y `send-full-record`. `04` §8,
+    `.env.example` y `docker-compose.yml` ya tenían las variables.
+  - Pendiente del Sprint 7: NFR-15 (`03` l.187) también cubre `sampleRows` de `/v1/schema-drift/analyze`. FR-05 debe
+    reutilizar `RecordRedaction`, no escribir otra redacción.
+- Decisión del owner (2026-11-19): "Apruebo B4 feat/FR-07-redaction: AiPrivacyProperties y RecordRedaction con nombres
+  canónicos validados contra el schema al arrancar, la redacción solo de lo que viaja salvo los campos con violación,
+  AI_SEND_FULL_RECORD=false con solo las columnas de violaciones a nivel campo y {} para MALFORMED_ROW, las claves
+  nuevas en application.yml, el cambio de preparación en TriageRequestBuilderTest y RecordTestSupport, el test del job
+  con WireMock, y la entrada en docs/CHANGELOG.md, con las decisiones D232 a D238."
+- Decisiones:
+  - D232: `AI_REDACT_FIELDS` usa nombres canónicos separados por comas, traducidos a la cabecera de origen con el
+    schema. Un nombre desconocido impide arrancar, porque no redactaría nada (S5-13). | Reversible: sí
+    | Aprobado por: owner.
+  - D233: solo se redacta lo que viaja; `raw_payload` de la cuarentena no cambia, porque una persona lo necesita para
+    corregir la fila (S5-12). | Reversible: sí | Aprobado por: owner.
+  - D234: no se redacta ningún campo que tenga una violación en la misma solicitud, ya que todas viajan juntas.
+    | Reversible: sí | Aprobado por: owner.
+  - D235: una lista vacía no redacta nada; es una exclusión explícita. | Reversible: sí | Aprobado por: owner.
+  - D236: con `AI_SEND_FULL_RECORD=false`, una violación `_record` no añade columnas, porque los docs no definen las
+    columnas de una regla; `MALFORMED_ROW` envía `{}` (AC-07.4, `06` A.1). | Reversible: sí | Aprobado por: owner.
+  - D237: un valor vacío también se redacta, para no revelar ni que estaba vacío. | Reversible: sí
+    | Aprobado por: owner.
+  - D238: los tests del processor y del builder usan "sin redacción" (`RecordTestSupport.noRedaction`) y conservan sus
+    aserciones; el cableado real lo prueba un test del job con WireMock. | Reversible: sí | Aprobado por: owner.
+- Riesgo anotado, sin cambio: el `technicalMessage` de `BUSINESS_RULE_VIOLATION` incluye los valores de factura y
+  cantidad (`Validator.java:179`) y viaja aunque `AI_SEND_FULL_RECORD=false`. No incluye `customer_id`.
+- Tests existentes que cambian (solo la preparación):
+  - `TriageRequestBuilderTest`: el builder recibe `RecordTestSupport.noRedaction(...)`.
+  - `RecordTestSupport.processor`: igual.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Proveedor `openai_compatible` (2026-11-19)
+- Rama `feat/FR-17-openai-compatible`, la quinta del plan del Sprint 5 (FR-17, AC-17.1, AC-17.3, AC-17.4; `07`
+  l.123). Nuevo `OpenAICompatibleProvider`, que sirve para OpenAI, Ollama, Groq, LM Studio y otros a través de
+  `LLM_BASE_URL`. `create_provider` lo elige solo por `LLM_PROVIDER`.
+  - Dependencia nueva de runtime: `openai==3.45.0`. Resuelve contra `uv.lock` y funciona con Python 3.14.7 (medido).
+    Hace que `httpx2` 2.13.1, que ya estaba en dev, pase a ser transitiva de runtime.
+  - `anthropic` sigue respondiendo `PROVIDER_NOT_CONFIGURED` hasta la rama siguiente.
+  - Una batería de contrato compartida (`tests/test_provider_contract.py`) prueba el adaptador con un doble HTTP
+    (`httpx2.MockTransport`), sin red. La guardia de `tests/conftest.py` corta cualquier conexión o resolución de
+    nombres fuera de loopback.
+  - `ProviderBadRequest` y `ProviderInvalidOutput` son excepciones nuevas del proveedor. `04` §9 (l.356) listaba
+    cuatro; esta rama añade las dos y la nota de que los reintentos del SDK van desactivados.
+- Decisión del owner (2026-11-19): "Apruebo B5 feat/FR-17-openai-compatible: openai==3.45.0 en pyproject.toml y
+  uv.lock, OpenAICompatibleProvider con json_object, max_tokens, LLM_TEMPERATURE y max_retries=0, las excepciones
+  ProviderBadRequest y ProviderInvalidOutput con su manejo en TriageService, un proveedor por app, la guardia de red en
+  conftest.py, la batería de contrato, los cambios en test_a_real_provider_is_refused_by_name y
+  test_a_real_provider_is_a_503_with_or_without_key, y los cambios 🟠 en docs/04 §9, .env.example y docs/CHANGELOG.md,
+  con las decisiones D239 a D248."
+- Decisiones:
+  - D239: `openai==3.45.0` (publicada el 2026-11-04) y no la última, 3.56.0, que se publicó el mismo día del plan. Una
+    versión de horas es un riesgo de cadena de suministro innecesario. | Reversible: sí | Aprobado por: owner.
+  - D240: `response_format={"type": "json_object"}`, con el esquema en el prompt de sistema (S5-7).
+    | Reversible: sí | Aprobado por: owner.
+  - D241: `max_tokens`, que aceptan Ollama, Groq y la mayoría de servidores compatibles; no se ha verificado si algún
+    modelo nuevo de OpenAI exige `max_completion_tokens`. | Reversible: sí | Aprobado por: owner.
+  - D242: la temperatura sale de `LLM_TEMPERATURE` (default 0) y se fija en el constructor (S5-9).
+    | Reversible: sí | Aprobado por: owner.
+  - D243: `max_retries=0`, porque los reintentos son del servicio (NFR-07). El timeout del SDK es
+    `LLM_TIMEOUT_SECONDS`, como red de seguridad por debajo de `asyncio.timeout`. | Reversible: sí
+    | Aprobado por: owner.
+  - D244: cualquier otro 4xx (modelo inexistente, contexto demasiado largo) es `ProviderBadRequest`, que da
+    `502 LLM_PROVIDER_ERROR` sin reintento, porque un reintento recibiría lo mismo. | Reversible: sí
+    | Aprobado por: owner.
+  - D245: una respuesta vacía, que no es JSON, que no es un objeto o que se cortó por el límite de tokens es
+    `ProviderInvalidOutput`. Va a la reparación como cualquier salida inválida, y sus tokens cuentan.
+    | Reversible: sí | Aprobado por: owner.
+  - D246: un proveedor por app y configuración, guardado en `app.state.providers`. Su cliente se cierra en el
+    `lifespan` de `create_app` al apagar la app. | Reversible: sí | Aprobado por: owner.
+  - D247: un fixture autouse en `tests/conftest.py` hace fallar `socket.connect`, `connect_ex` y `getaddrinfo`
+    hacia cualquier destino que no sea loopback (S5-6). | Reversible: sí | Aprobado por: owner.
+  - D248: de `Retry-After` solo se interpretan segundos; una fecha HTTP da `None`. | Reversible: sí
+    | Aprobado por: owner.
+- Tests existentes que cambian:
+  - `test_provider_factory.py::test_a_real_provider_is_refused_by_name`: queda solo para `anthropic`, y el docstring
+    del módulo se actualiza.
+  - `test_triage_api.py::test_a_real_provider_is_a_503_with_or_without_key`: sin clave, los dos proveedores siguen
+    dando 503; con clave, solo `anthropic`. Con `openai_compatible` y clave el test intentaba una conexión de red real:
+    antes de añadir la guardia, ese caso dio 502.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/04-arquitectura.md` (§9), 🟠
+  `.env.example` (un comentario), 🟠 `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock`
+  (dependencia nueva, sin cambio de versión mayor).
+
+## Sprint 5 — Proveedor `anthropic` (2026-11-20)
+- Rama `feat/FR-17-anthropic`, la sexta del plan del Sprint 5 (FR-17, AC-17.1, AC-17.3; `07` l.124). Nuevo
+  `AnthropicProvider` sobre la API Messages. `create_provider` lo elige solo por `LLM_PROVIDER`, y ya no queda ningún
+  valor de `LLM_PROVIDER` sin adaptador.
+  - Dependencia nueva de runtime: `anthropic==2.5.0`. Resuelve contra `uv.lock` y funciona con Python 3.14.7 (medido).
+    Trae como transitivas `opentelemetry-api` 1.45.2 y `docstring-parser` 0.18.0. `opentelemetry-api` entra solo
+    como dependencia del SDK: PipeMend no la configura ni la usa.
+  - El SDK envía `anthropic-version: 2026-10-21`, y esa versión de la API rechaza la temperatura en todos los
+    modelos. `03` NFR-11 y NFR-13 y `04` l.253 y §8 recogen la excepción (decisión A del owner).
+  - La batería de contrato de B5 corre ahora con dos wires, OpenAI y Anthropic, más los tests propios de Anthropic.
+- Decisión del owner (2026-11-20), tras comprobar el SDK: "Decido la opción A para B6: anthropic==2.5.0, el
+  adaptador de Anthropic no envía temperature porque la API 2026-10-21 la rechaza, LLM_TEMPERATURE solo aplica a
+  openai_compatible, y se actualizan docs/03 NFR-11 y NFR-13 y docs/04 l.253 y §8/§9 con esa excepción."
+- Aprobación del owner (2026-11-20): "Apruebo B6 feat/FR-17-anthropic: anthropic==2.5.0 en pyproject.toml y
+  uv.lock, AnthropicProvider sin temperature, thinking ni effort, con output_config.format json_schema, max_tokens
+  como salida truncada y refusal como ProviderBadRequest, el arranque bloqueado con anthropic y LLM_TEMPERATURE
+  distinto de 0, stop_reason en ProviderResult y en el log llm_call, la función de Retry-After compartida en
+  base.py, _AnthropicWire en la batería de contrato, los cambios en test_a_real_provider_is_refused_by_name,
+  test_a_real_provider_is_a_503_with_or_without_key y test_the_call_carries_the_settings_and_both_prompts, y los
+  cambios 🟠 en docs/03 NFR-11 y NFR-13, docs/04 l.253 y §8/§9, .env.example y docs/CHANGELOG.md, con las
+  decisiones D249 a D255."
+- Decisiones:
+  - D249: `anthropic==2.5.0` (publicada el 2026-11-04), una versión de al menos dos semanas, como en D239.
+    | Reversible: sí | Aprobado por: owner.
+  - D250: el adaptador no envía temperatura. Con `LLM_PROVIDER=anthropic` y `LLM_TEMPERATURE` distinto de 0, el
+    servicio no arranca (validación de `Settings`, que `create_app` lee al arrancar). | Reversible: sí
+    | Aprobado por: owner.
+  - D251: el JSON se pide con `output_config.format` de tipo `json_schema`, con el esquema de `LlmTriageOutput` que
+    ya recibe `complete_json`. Sin *tool use* ni *prefill* (S5-8, X-11). | Reversible: sí | Aprobado por: owner.
+  - D252: `stop_reason` `max_tokens` es `ProviderInvalidOutput` (`truncated`) y va a la reparación; `refusal` es
+    `ProviderBadRequest`, sin reparación; una respuesta sin bloque de texto es `json_invalid`. El JSON se lee del
+    primer bloque `text`, aunque vaya detrás de un bloque `thinking`. | Reversible: sí | Aprobado por: owner.
+  - D253: no se envía `thinking` ni `effort`, porque enviarlos según el modelo exigiría nombres de modelo en el
+    código. `stop_reason` viaja en `ProviderResult` y `ProviderInvalidOutput` y la línea `llm_call` lo registra como
+    `stopReason`: en OpenAI es su `finish_reason`, y con el mock, `null`. Además, `ProviderBadRequest` lleva el
+    código HTTP y el `stop_reason` cuando existen (un 4xx, su `status`; un `refusal`, `stop_reason="refusal"` sin
+    `status`), en los dos adaptadores, y la línea `llm_call` con `outcome=bad_request` registra `httpStatus` y
+    `stopReason`, nunca el mensaje ni el cuerpo: en B7 hay que distinguir un esquema rechazado (400) de un modelo
+    inexistente (404) y de un `refusal`. | Reversible: sí | Aprobado por: owner.
+  - D254: `LLM_BASE_URL` se ignora con `anthropic`, que usa el endpoint por defecto del SDK, como ya decía `04` §8.
+    | Reversible: sí | Aprobado por: owner.
+  - D255: `retry_after` pasa a `providers/base.py` y la comparten los dos adaptadores. Con ella se mueven los dos
+    errores de salida (`NOT_AN_OBJECT`, `TRUNCATED`), para que la reparación reciba el mismo texto con cualquier
+    proveedor. | Reversible: sí | Aprobado por: owner.
+- Aprobación del owner (2026-11-20), antes del commit: "Apruebo añadir en B6 que ProviderBadRequest lleve el código
+  HTTP y el stop_reason cuando existan, y que la línea llm_call registre httpStatus y stopReason también en
+  bad_request, con sus tests."
+- Riesgos conocidos para B7:
+  - Un `refusal` da `502 LLM_PROVIDER_ERROR`, que cuenta como fallo para el circuit breaker del pipeline (`03`
+    l.102). Muchos rechazos seguidos podrían abrirlo.
+  - Si la API rechaza nuestro esquema (`JsonValue` como `{}`), se para y se consulta al owner; no se prepara nada
+    ahora.
+  - Los modelos que piensan por defecto gastan parte de `LLM_MAX_OUTPUT_TOKENS`; `stopReason` lo mostrará.
+- Tests existentes que cambian:
+  - `test_provider_factory.py::test_a_real_provider_is_refused_by_name` pasa a ser
+    `test_each_provider_builds_its_adapter`, con los tres valores de `LLM_PROVIDER`; el docstring del módulo se
+    actualiza.
+  - `test_triage_api.py::test_a_real_provider_is_a_503_with_or_without_key`: desaparece el caso de `anthropic` con
+    clave, que ahora intentaría salir a la red. Los dos casos sin clave siguen dando 503. El docstring de
+    `test_a_real_provider_without_key_is_refused_before_the_factory` deja de mencionar el Sprint 5.
+  - `test_provider_contract.py::test_the_call_carries_the_settings_and_both_prompts`: la temperatura esperada es la de
+    cada wire, `0` en OpenAI y ausente en Anthropic.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/03-requisitos-no-funcionales.md`
+  (NFR-11, NFR-13), 🟠 `docs/04-arquitectura.md` (l.253, §8 y §9), 🟠 `.env.example` (un comentario), 🟠
+  `docs/CHANGELOG.md`; `ai-service/pyproject.toml` y `ai-service/uv.lock` (dependencia nueva, sin cambio de versión
+  mayor).
+
+## Sprint 5 — Esquema de salida concreto para structured outputs (2026-11-22)
+- Rama `fix/FR-17-anthropic-schema` (FR-17, AC-17.1), abierta por la señal de parada de B7. La API de Anthropic
+  rechazó el esquema de salida: "output_config.format.schema: Empty schema ({}) that accepts any JSON value is not
+  supported. Please specify a concrete type." El origen era `parameters: dict[str, JsonValue]` en `LlmCorrection`,
+  que generaba `"JsonValue": {}` y un `additionalProperties` que era un esquema y no `false`.
+  - `LlmParameters` concreto según `06` l.222: `sourcePattern`, `decimalSeparator` y `groupingSeparator` (string o
+    null) como string, y `strippedSymbols` como array de string, todas opcionales y sin claves extra; `{}` para las
+    demás operaciones. El bloque `## Output schema` de `triage_v1.md` se regenera, y los cuatro few-shot siguen
+    validando.
+  - El contrato público con el pipeline no cambia: `Correction.parameters` sigue siendo `dict[str, JsonValue]` en
+    `contracts.py`, y `contracts/` queda igual.
+  - Cambio de comportamiento: un `parameters` con una clave desconocida o un tipo incorrecto pasa a ser salida
+    inválida y va a la reparación. Antes pasaba la frontera y lo rechazaban la política o los verificadores.
+  - La primera petición con un esquema nuevo lo compila en la API, y la caché dura 24 h. La comprobación manual del
+    owner lo deja compilado antes de volver a B7, para que esa compilación no caiga en una llamada medida.
+- Aprobación del owner (2026-11-22): "Apruebo fix/FR-17-anthropic-schema: LlmParameters como TypedDict con
+  sourcePattern, decimalSeparator, groupingSeparator (string o null) y strippedSymbols (array de string), opcionales y
+  sin claves extra, en lugar de JsonValue en LlmCorrection.parameters, un solo esquema para todos los proveedores, el
+  bloque Output schema de triage_v1.md regenerado, el test que recorre el esquema enviado sin subesquemas vacíos y con
+  additionalProperties siempre false, sin cambios en contracts.py ni contracts/, y los cambios 🟠 en triage_v1.md y
+  docs/CHANGELOG.md, con las decisiones D262 a D265."
+- Aprobación del owner (2026-11-22), tras la primera comprobación manual: "Apruebo en fix/FR-17-anthropic-schema quitar
+  minimum/maximum de confidence en el esquema de LlmTriageOutput y comprobar el rango 0-1 con un validador de
+  Pydantic que no aparezca en el esquema, regenerando el bloque Output schema de triage_v1.md, con sus tests e
+  inyecciones."
+- Decisiones:
+  - D262: un solo esquema concreto en `LlmTriageOutput` para todos los proveedores, sin transformarlo en el adaptador
+    de Anthropic. El bloque del prompt sigue siendo igual al esquema enviado. | Reversible: sí | Aprobado por: owner.
+  - D263: `LlmParameters` es un `TypedDict` con las claves opcionales, no una unión por operación. Qué claves
+    necesita cada operación lo comprueban los verificadores (`02` §4). Va con un comentario y no con un docstring,
+    porque el docstring viajaría al LLM como `description` del esquema. | Reversible: sí | Aprobado por: owner.
+  - D264: un test recorre el esquema enviado. Falla si un subesquema acepta cualquier valor (`{}`, o solo
+    anotaciones como `title`, que es como sale `Any` con Pydantic) o si algún objeto no tiene
+    `additionalProperties: false`. | Reversible: sí | Aprobado por: owner.
+  - D265: `minimum`/`maximum` de `confidence` no se tocan. La documentación de structured outputs las da como no
+    soportadas, y es un riesgo sin verificar que la comprobación manual aísla. Queda sustituida por D266.
+    | Reversible: sí | Aprobado por: owner.
+  - D266: la primera comprobación manual del owner (mensaje sintético, imagen de esta rama, Haiku 5.5) dio:
+    - esquema completo: HTTP 400 "output_config.format.schema: For 'number' type, properties maximum, minimum are not
+      supported". El `{}` ya no aparece;
+    - sonda `minimum`/`maximum`: HTTP 400 con el mismo mensaje;
+    - sonda de propiedad opcional: OK, `stop_reason=end_turn`;
+    - sonda de `description`: OK, `stop_reason=end_turn`.
+
+    Por eso `confidence` pierde `ge`/`le` en `LlmAnalysis`, y el rango 0–1 lo comprueba un `AfterValidator` que no
+    aparece en el esquema. El prompt ya dice "a number from 0 to 1". El test que recorre el esquema falla también si
+    un `number`, `integer` o `string` lleva `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+    `multipleOf`, `minLength` o `maxLength`. `Analysis` en `contracts.py` conserva su `ge`/`le`: el contrato público
+    no cambia.
+
+    Resultado: el esquema funciona de punta a punta con Haiku 5.5. El owner hizo una corrida de `dirty-1k` con la
+    imagen de esta rama:
+    - lote `COMPLETED`: 1000 leídas, 950 directas, 27 autocorregidas, 23 en cuarentena, 45 llamadas a la IA;
+    - ningún 400 ni ningún `bad_request`: `ai_call_log` no tiene `HTTP_ERROR 400`;
+    - política y verificación sin rechazos; STOP CHECK 0.
+
+    Los demás hallazgos de esa corrida van a la entrada de B7. | Reversible: sí | Aprobado por: owner.
+- Riesgos: la propiedad opcional y la `description` pasaron la comprobación manual con Haiku 5.5, y el esquema
+  completo funcionó en la corrida de `dirty-1k`. No queda ningún riesgo conocido del esquema.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `ai-service/app/prompts/triage_v1.md`
+  (solo el bloque del esquema; todavía no está en `main`), 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Prueba manual con LLM real (2026-11-22)
+- Rama `chore/sprint-5-real-llm-trial`, la séptima y última del plan del Sprint 5 (`07` l.127, NFR-11, AC-20.4 sin
+  la matriz). El owner ejecutó las corridas con su `.env` sobre `dirty-1k` completo, subido desde `data/samples/`
+  (solo lectura). Aquí van solo agregados operativos (S5-15), sin comparar con `labels.csv`.
+  - Sin cambios de código ni de `triage_v1.md`: la condición para ajustar INVALID_TYPE no se dio.
+  - La prueba queda cerrada sin una tercera corrida.
+- Aprobación del owner: "Apruebo B7 chore/sprint-5-real-llm-trial: sonda de dirty-1k completo con Ollama qwen2.5:3b
+  y, si no cumple S5-16, con Haiku; latencia desde ai_call_log solo con SUCCESS, INVALID_RESPONSE y TIMEOUT,
+  CIRCUIT_OPEN aparte; hallazgos solo en docs/CHANGELOG.md; ajustes de triage_v1.md solo por señales de contrato y
+  política, cada uno con su propia frase, dentro de 3 h, incluido el de INVALID_TYPE si la sonda lo muestra; con las
+  decisiones D256 a D261."
+- Corrida 1, Ollama `qwen2.5:3b` (`openai_compatible`, solo CPU, `OLLAMA_CONTEXT_LENGTH=8192`, confirmado con
+  `ollama ps`):
+  - Lote `COMPLETED` en 201 s.
+  - 10 llamadas con `504 LLM_TIMEOUT` (el timeout por llamada de 20 s), 40 `CIRCUIT_OPEN` y 50 registros en
+    `AI_UNAVAILABLE`.
+  - STOP CHECK 0.
+  - **No pasa S5-16**, porque se abrió el circuito.
+  - El prompt ronda los 8k tokens de entrada (medido con Haiku, abajo), muy cerca de los 8192 de contexto
+    configurados. Con Ollama no hubo respuestas de las que medir tokens, así que no está verificado si su
+    tokenizador trunca el prompt; el supuesto de `04` §9 sigue sin verificar.
+- Corrida 2, Haiku 5.5 (`anthropic`): las diez llamadas con IA dieron `400` porque la API rechazó el esquema de
+  salida (el subesquema `{}` de `JsonValue`), y el resultado fue 40 `CIRCUIT_OPEN`, 50 `AI_UNAVAILABLE` y STOP CHECK 0,
+  sin coste. Fue la señal de parada de B7, que se corrigió en #64 (D262–D266).
+- Corrida 3, Haiku 5.5 con #64 (`LLM_MAX_OUTPUT_TOKENS=1024`, timeouts sin tocar). Datos de AC-20.4 sin la matriz:
+  - proveedor `anthropic`, modelo `claude-haiku-5-5`, prompt `triage_v1`;
+  - lote `COMPLETED` en 187,5 s: 1000 leídas, 950 directas, 27 autocorregidas, 23 en cuarentena;
+  - 45 solicitudes a la IA sin caché y 5 `CACHE_HIT`. En `ai_call_log`: 42 `SUCCESS` y 3 `HTTP_ERROR 502
+    LLM_INVALID_OUTPUT`;
+  - 51 llamadas al LLM (`llmCalls` medio 1,07): 39 primeras correctas, 6 primeras cortadas por `max_tokens`, 3
+    reparaciones correctas y 3 reparaciones cortadas por `max_tokens`;
+  - tokens: 8317 de entrada y 553 de salida de media por solicitud; en total, 349 304 de entrada y 23 229 de salida;
+  - S5-16: n 45, p50 3437 ms, p95 10395 ms, sin `CIRCUIT_OPEN`. **Pasa.** La latencia por llamada al LLM, en
+    `llm_call`, fue p50 3676 ms, p95 5469 ms y máximo 6070 ms;
+  - cuarentena: 20 `AI_REVIEW_REQUIRED` y 3 `AI_INVALID_RESPONSE`. Sin rechazos de política ni de verificación;
+  - correcciones aplicadas:
+
+    | Campo | Operación | Correcciones |
+    |---|---|---|
+    | `unit_price` | `PARSE_NUMBER` | 6 |
+    | `invoice_date` | `PARSE_DATE` | 6 |
+    | `customer_id` | `NULLIFY_TOKEN` | 3 |
+    | `customer_id` | `PARSE_NUMBER` | 3 |
+    | `country` | `MAP_TO_ENUM` | 3 |
+    | `country` | `NORMALIZE_CASE` | 3 |
+    | `invoice_no` | `TRIM` | 2 |
+    | `stock_code` | `TRIM` | 1 |
+
+  - STOP CHECK 0. La revisión manual del owner de 10 correcciones dio que todas salen de su operación;
+  - INVALID_TYPE siempre como `NEEDS_HUMAN_REVIEW` (1 `HIGH` y 1 `MEDIUM`), así que no hubo ajuste del prompt.
+- Costo (NFR-11): 0,06 USD en la corrida 3, según el owner. La fórmula es
+  `costo ≈ in_sum × precio_entrada + out_sum × precio_salida`, con 349 304 tokens de entrada y 23 229 de salida; el
+  precio por millón no se anota. Con Ollama el costo es 0.
+- Decisión S5-16: **Haiku 5.5 es el proveedor de la corrida de evaluación del Sprint 7.** Ollama `qwen2.5:3b` en CPU
+  no cabe en la configuración real (plazo de 25 s, umbral de llamada lenta de 20 s).
+- Hallazgos:
+  - 9 de las 51 llamadas se cortaron por `max_tokens` con `LLM_MAX_OUTPUT_TOKENS=1024`, y 3 de ellas acabaron en
+    `AI_INVALID_RESPONSE` porque también se cortó la reparación. **Recomendación: 2048 para la corrida de evaluación
+    del Sprint 7.** Los datos no permiten distinguir si el razonamiento por defecto del modelo contribuye (D253).
+  - La entrada media es de 8317 tokens por solicitud, por encima de lo estimado ("del orden de miles", `03` NFR-11).
+    Es la parte principal del costo, y deja a Ollama sin margen con un contexto de 8192.
+  - La consulta S5-16 del plan solo contaba `SUCCESS`, `INVALID_RESPONSE` y `TIMEOUT`, y se dejaba fuera los
+    `HTTP_ERROR`: los timeouts de `ai-service` llegan al pipeline como `HTTP_ERROR 504`. El owner usó
+    `outcome NOT IN ('CACHE_HIT', 'CIRCUIT_OPEN')`.
+  - No hubo ningún `refusal` ni ningún `bad_request` en la corrida 3.
+- Decisiones:
+  - D256: la sonda es `dirty-1k` completo, sin comparar con las etiquetas. El reporte de AC-20.4 con la matriz
+    `defect_type × outcome` sigue siendo del Sprint 7. | Reversible: sí | Aprobado por: owner.
+  - D257: la latencia de S5-16 sale de `ai_call_log`, que es lo que ve el circuit breaker; la de `llm_call` sirve de
+    contraste. Con circuito abierto el proveedor no pasa, y los timeouts no se tocan para la sonda. Se cuentan todos
+    los resultados salvo `CACHE_HIT` y `CIRCUIT_OPEN`. | Reversible: sí | Aprobado por: owner.
+  - D258: Ollama escucha en `172.17.0.1` (docker0) y no en `0.0.0.0`, con `OLLAMA_CONTEXT_LENGTH=8192`.
+    | Reversible: sí | Aprobado por: owner.
+  - D259: Haiku solo si Ollama no cumple S5-16, con el límite de gasto puesto antes y sin tocar los topes.
+    | Reversible: sí | Aprobado por: owner.
+  - D260: el prompt solo se ajusta por señales de contrato y política, con una frase por cambio y dentro de 3 h. No
+    hizo falta ninguno. | Reversible: sí | Aprobado por: owner.
+  - D261: los hallazgos van solo a este CHANGELOG (S5-15); nada en `reports/`. | Reversible: sí
+    | Aprobado por: owner.
+- Pendiente para `docs/sprint-5-close`:
+  - el diagrama de `04` l.176;
+  - la nota de `ANTHROPIC_BASE_URL` en `04` §9;
+  - el supuesto de contexto de Ollama en `04` §9, que sigue sin verificar;
+  - la casilla 49 de l.1812;
+  - `04` §9 marcado como verificado.
+- Tests existentes que cambian: ninguno.
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`.
+
+## Sprint 5 — Cierre (2026-11-22)
+- Hecho (`07` §6): las siete ramas del plan y un fix, todas con la CI de `dev` en verde.
+  - #58 prompt `triage_v1` (FR-08); #59 plazo, reintento y reparación (NFR-07); #60 tope diario `LLM_MAX_CALLS_PER_DAY`
+    (AC-08.8); #61 redacción de lo que viaja a la IA (FR-07, NFR-15); #62 `openai_compatible` (FR-17, AC-17.4); #63
+    `anthropic` (FR-17); #64 esquema de salida concreto para structured outputs (FR-17); #65 prueba manual con LLM
+    real (NFR-11, S5-16).
+- Entregables (`07` l.130): el proveedor se cambia solo por `.env`, y `04` §9 queda verificada con la prueba de B7.
+- Recortado: nada en este sprint.
+- Decisiones nuevas que piden ADR: ninguna. Los dos proveedores son "nuevos proveedores LLM detrás de la interfaz"
+  (`09` l.167), y `openai` y `anthropic` son bibliotecas, no dependencias de infraestructura. El esquema concreto de
+  #64 endurece la frontera LLM → `ai-service` sin cambiar el contrato con el pipeline.
+- Horas reales (mismo método que los cierres anteriores: días con actividad en git desde `v0.4` × 2,5 h): 4 días (18,
+  19, 20 y 22 de noviembre), ≈ 10 h, frente a las 9–12 h de `07` l.118. Acumulado S1-S5: ≈ 92,5 h.
+- Punto de control del Sprint 6 (`07` l.191: "`v0.6` sin etiquetar, o horas acumuladas > 60 h"): por horas ya se
+  cumple (≈ 92,5 h). La decisión sobre FR-05 queda para el owner al cerrar el Sprint 6; un agente no recorta (`07` l.194).
+- Publicación de `triage_v1`. Decisión del owner (2026-11-22): "Publico triage_v1: a partir del merge de dev a main es
+  🔴 y cualquier cambio del prompt será triage_v2 (09 l.64, 09 l.192)."
+- Correcciones: la línea del cierre del Sprint 4 que atribuía la casilla 49 de `docs/08` al Sprint 5 (es del Sprint 7);
+  el diagrama de `04` l.176; y en `04` §9, la nota de `ANTHROPIC_BASE_URL`, el supuesto de contexto de Ollama (no
+  verificable en la prueba) y la marca de verificada.
+- Decisión del owner (2026-11-22): "Apruebo docs/sprint-5-close: la entrada "Sprint 5 — Cierre" en docs/CHANGELOG.md con las ramas #58 a #65, nada
+  recortado, ninguna decisión que pida ADR, horas reales de 4 días (18, 19, 20 y 22 de noviembre) ≈ 10 h, el punto de
+  control de 07 l.191 para decidir al cerrar el Sprint 6 y mi frase de publicación de triage_v1; la corrección de la
+  casilla 49 en el cierre del Sprint 4; en docs/04 el diagrama de l.176, las notas de ANTHROPIC_BASE_URL y del contexto
+  de Ollama en §9 y §9 marcada como verificada; y el cambio de la sección Status del README.md."
+- Archivos protegidos modificados (con aprobación explícita del owner): 🟠 `docs/CHANGELOG.md`, 🟠
+  `docs/04-arquitectura.md`. `README.md` (sección Status), nombrado en la frase.

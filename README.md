@@ -59,7 +59,7 @@ Contributors — human or AI agent — should read [AGENTS.md](AGENTS.md) and
 
 ## Status
 
-**Sprint 4 of 8 completed (v0.4: end-to-end core with the mock provider)** ([plan](docs/07-plan-de-sprints.md)).
+**Sprint 5 of 8 completed (v0.5: real LLM providers — openai_compatible and anthropic — switchable via .env)** ([plan](docs/07-plan-de-sprints.md)).
 The full README (architecture diagram, 5-minute demo, evaluation results against ground truth,
 known limitations and roadmap) is a Sprint 8 deliverable.
 

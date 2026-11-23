@@ -21,7 +21,13 @@ from app.config import LlmProvider, Settings, get_settings
 from app.domain.contracts import ErrorCode, ProblemDetail
 from app.domain.triage_prompt import read_context
 from app.main import create_app
-from app.providers.base import ProviderResult
+from app.providers.base import (
+    ProviderAuthError,
+    ProviderRateLimited,
+    ProviderResult,
+    ProviderTimeout,
+    ProviderUnavailable,
+)
 from app.providers.mock import MockProvider
 
 FIXTURES = Path(__file__).resolve().parents[2] / "contracts" / "fixtures"
@@ -79,6 +85,16 @@ class _Canned:
         self, _system: str, _user: str, _schema: dict[str, Any]
     ) -> ProviderResult:
         return ProviderResult(self.content, None)
+
+
+class _Raises:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def complete_json(
+        self, _system: str, _user: str, _schema: dict[str, Any]
+    ) -> ProviderResult:
+        raise self.error
 
 
 class _FailsInside:
@@ -292,10 +308,36 @@ def test_an_invalid_output_is_a_502_that_quotes_nothing() -> None:
     assert ROW_VALUE not in response.text
 
 
-@pytest.mark.parametrize("provider", [LlmProvider.OPENAI_COMPATIBLE, LlmProvider.ANTHROPIC])
-@pytest.mark.parametrize("key", ["", "super-secret-key"])
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (ProviderTimeout(), 504, "LLM_TIMEOUT"),
+        (ProviderRateLimited(None), 429, "RATE_LIMITED"),
+        (ProviderUnavailable(), 502, "LLM_PROVIDER_ERROR"),
+        (ProviderAuthError(), 502, "LLM_PROVIDER_ERROR"),
+    ],
+)
+def test_a_provider_failure_is_its_problem_of_docs_06_a5(
+    error: Exception, status: int, code: str
+) -> None:
+    body = _body()
+    body["record"]["raw"] = body["record"]["raw"] | {"Description": ROW_VALUE}
+
+    response = _client(provider=_Raises(error)).post("/v1/triage", json=body)
+
+    _problem(response, status, code)
+    assert ROW_VALUE not in response.text
+
+
+@pytest.mark.parametrize(
+    ("provider", "key"),
+    [
+        (LlmProvider.OPENAI_COMPATIBLE, ""),
+        (LlmProvider.ANTHROPIC, ""),
+    ],
+)
 def test_a_real_provider_is_a_503_with_or_without_key(provider: LlmProvider, key: str) -> None:
-    """AC-17.3 without a key; with one, because it does not exist until Sprint 5 (docs/07)."""
+    """AC-17.3. With a key both are working providers, and here they would reach the network."""
     client = _client(Settings(llm_provider=provider, llm_api_key=key))
 
     response = client.post("/v1/triage", json=_body())
@@ -307,7 +349,7 @@ def test_a_real_provider_is_a_503_with_or_without_key(provider: LlmProvider, key
 def test_a_real_provider_without_key_is_refused_before_the_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-17.3 must not depend on the factory refusing what does not exist until Sprint 5."""
+    """AC-17.3 is checked before the factory builds anything."""
     monkeypatch.setattr(triage, "create_provider", lambda _settings: MockProvider())
     settings = Settings(llm_provider=LlmProvider.ANTHROPIC, llm_api_key="")
 

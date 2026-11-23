@@ -13,7 +13,9 @@ import com.pipemend.pipeline.schema.SchemaLoader;
 import com.pipemend.pipeline.schema.SchemaTestSupport;
 import com.pipemend.pipeline.transform.SalesTransactionTransformer;
 import com.pipemend.pipeline.triage.AiBudget;
+import com.pipemend.pipeline.triage.AiPrivacyProperties;
 import com.pipemend.pipeline.triage.AiTriagePort;
+import com.pipemend.pipeline.triage.RecordRedaction;
 import com.pipemend.pipeline.triage.TriageOutcome;
 import com.pipemend.pipeline.triage.TriageRequestBuilder;
 import com.pipemend.pipeline.triage.TriageResponseValidator;
@@ -31,6 +33,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -77,10 +80,15 @@ public final class RecordTestSupport {
                 schema,
                 validator,
                 new SalesTransactionTransformer(schema),
-                new TriageRequestBuilder(batchId, schema, "dirty.csv", "CSV"),
+                new TriageRequestBuilder(batchId, schema, "dirty.csv", "CSV", noRedaction(schema)),
                 triage,
                 budget,
                 applier(schema, validator));
+    }
+
+    /** The whole record travels, so the tests of the processor see what they sent (D238). */
+    public static RecordRedaction noRedaction(SchemaDefinition schema) {
+        return new RecordRedaction(schema, new AiPrivacyProperties(List.of(), true));
     }
 
     /** With the defaults of application.yml: 0.85, 0.90 and the whole allowlist of docs/02 section 4. */
